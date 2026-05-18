@@ -10,21 +10,23 @@
 use actix_web::HttpResponse;
 use sysinfo::{Disks, Networks, System};
 
-use crate::{api::{auth::AuthUser, ResponseStructure}, service::global::OS_INFO};
+use crate::{
+    api::{auth::AuthUser, ResponseStructure},
+    service::global::OS_INFO,
+};
 use serde_json::json;
 pub async fn os_info(_: AuthUser) -> HttpResponse {
     let mut sys = System::new_all();
 
-
     let timestamp = chrono::Local::now().timestamp();
     std::thread::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL); //由于要兼容VM虚拟机，所以需要等待一下才能获取到数据
-    sys.refresh_cpu();
-    let mut cpu_info: Vec<f32> = Vec::new(); 
+    sys.refresh_cpu_all();
+    let mut cpu_info: Vec<f32> = Vec::new();
     for cpu in sys.cpus() {
         cpu_info.push(cpu.cpu_usage());
     }
 
-    let mut disk_info: Vec<serde_json::Value> = Vec::new(); 
+    let mut disk_info: Vec<serde_json::Value> = Vec::new();
     for disk in &Disks::new_with_refreshed_list() {
         let mount_point = disk.mount_point().to_str();
         if let Some(mp) = mount_point {
@@ -42,9 +44,8 @@ pub async fn os_info(_: AuthUser) -> HttpResponse {
         }))
     }
 
-    let mut network_info: Vec<serde_json::Value> = Vec::new(); 
+    let mut network_info: Vec<serde_json::Value> = Vec::new();
     for (interface_name, data) in &Networks::new_with_refreshed_list() {
-        
         if interface_name.to_string().contains("NPCAP") {
             continue;
         }
@@ -78,7 +79,6 @@ pub async fn os_info(_: AuthUser) -> HttpResponse {
     }))
 }
 
-
 // fn calculate_load_percentage(cpu_num:u8) -> io::Result<f64> {
 //     let path = std::path::Path::new("./runtime/loadavg");
 //     let contents = fs::read_to_string(path)?;
@@ -89,7 +89,6 @@ pub async fn os_info(_: AuthUser) -> HttpResponse {
 //         return Err(io::Error::new(io::ErrorKind::InvalidData, "Not enough data in /proc/loadavg"));
 //     }
 //     let load_1_min: f64 = parts[0].parse().map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Invalid load average"))?;
-
 
 //     // 计算负载百分比
 //     let load_percentage = load_1_min / cpu_num as f64 * 100.0;

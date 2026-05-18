@@ -14,6 +14,7 @@ use rust_panel::{
     api, common::sys::get_all_ip_addresses, errors::handlers, log_error, log_info, log_warn, models::user::find_user_by_id, service::{
         db::{install, DBPool},
         global::{CONF, SESSION_KEY},
+        init::init_app,
     }, test
 };
 use std::{collections::HashMap, fs::File, process};
@@ -48,7 +49,7 @@ async fn main() -> std::io::Result<()> {
         ))
         .expect("Failed to create pool.");
     install(&pool);
-    test::demo(&pool).await;
+    let _ = test::demo(&pool).await;
 
     if !port_check::is_local_port_free(CONF.app.port) {
         log_error!("Error: The Port {} is already in use.", CONF.app.port);
@@ -172,9 +173,11 @@ async fn main() -> std::io::Result<()> {
 }
 
 fn init() {
+    let _ = std::fs::create_dir_all("./runtime/logs");
+    let _ = std::fs::create_dir_all("./public");
     log4rs::init_file("./config/log4rs.yaml", Default::default()).expect("init Error...log4rs init failed!");
+    init_app();
     rust_i18n::set_locale("zh-CN");
-
 
 
     let pid = process::id();

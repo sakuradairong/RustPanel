@@ -6,13 +6,13 @@
  * @LastEditTime: 2024-07-11 06:34:29
  * @FilePath: \RustPanel\src\models\docker\image.rs
  */
-use bollard::image::ListImagesOptions;
+use bollard::query_parameters::ListImagesOptions;
 use super::docker;
 
 pub async fn list(){
 
     if let Ok(client) = docker() {
-        if let Ok(images) = client.list_images(Some(ListImagesOptions::<String> {
+        if let Ok(images) = client.list_images(Some(ListImagesOptions {
             all: true,
             ..Default::default()
         })).await {

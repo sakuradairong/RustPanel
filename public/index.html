@@ -1,0 +1,916 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RustPanel</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#0f172a;--card:#1e293b;--border:#334155;--primary:#38bdf8;--secondary:#818cf8;--success:#22c55e;--warning:#f59e0b;--error:#ef4444;--text:#e2e8f0;--text-muted:#94a3b8;--text-dim:#64748b;--sidebar-w:240px;--topbar-h:56px;font-family:system-ui,-apple-system,sans-serif}
+body{background:var(--bg);color:var(--text);min-height:100vh;overflow-x:hidden}
+a{color:var(--primary);text-decoration:none}
+button{cursor:pointer;font-family:inherit}
+input,textarea,select{background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:8px 12px;font-size:0.9rem;outline:none;transition:border-color .15s;width:100%}
+input:focus,textarea:focus,select:focus{border-color:var(--primary)}
+button.btn{background:linear-gradient(135deg,var(--primary),var(--secondary));color:#fff;border:none;border-radius:6px;padding:8px 20px;font-size:0.9rem;font-weight:600;transition:opacity .15s}
+button.btn:hover{opacity:.85}
+button.btn-sm{padding:5px 12px;font-size:0.8rem}
+button.btn-danger{background:linear-gradient(135deg,var(--error),#dc2626)}
+button.btn-success{background:linear-gradient(135deg,var(--success),#16a34a)}
+button.btn-warning{background:linear-gradient(135deg,var(--warning),#d97706)}
+.error-msg{color:var(--error);font-size:0.85rem;margin-top:4px}
+.hidden{display:none!important}
+.card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:1.25rem}
+.flex{display:flex}
+.flex-col{flex-direction:column}
+.items-center{align-items:center}
+.justify-between{justify-content:space-between}
+.gap-2{gap:.5rem}
+.gap-3{gap:.75rem}
+.gap-4{gap:1rem}
+.mt-2{margin-top:.5rem}
+.mt-3{margin-top:.75rem}
+.mt-4{margin-top:1rem}
+.mb-2{margin-bottom:.5rem}
+.mb-3{margin-bottom:.75rem}
+.mb-4{margin-bottom:1rem}
+.p-3{padding:.75rem}
+.p-4{padding:1rem}
+.text-sm{font-size:0.85rem}
+.text-xs{font-size:0.75rem}
+.text-muted{color:var(--text-muted)}
+.text-dim{color:var(--text-dim)}
+.text-center{text-align:center}
+.overflow-auto{overflow:auto}
+
+/* Layout */
+#app{display:flex;min-height:100vh}
+#sidebar{width:var(--sidebar-w);background:var(--card);border-right:1px solid var(--border);display:flex;flex-direction:column;position:fixed;top:0;left:0;height:100vh;z-index:100;transition:transform .2s}
+#sidebar .logo{padding:1rem;font-size:1.25rem;font-weight:700;background:linear-gradient(135deg,var(--primary),var(--secondary));-webkit-background-clip:text;-webkit-text-fill-color:transparent;border-bottom:1px solid var(--border)}
+#sidebar .logo span{-webkit-text-fill-color:var(--text);font-weight:400;font-size:0.75rem;display:block;margin-top:2px}
+#sidebar .nav{flex:1;overflow-y:auto;padding:.5rem 0}
+#sidebar .nav-item{display:flex;align-items:center;gap:.5rem;padding:.5rem 1rem;color:var(--text-muted);cursor:pointer;transition:all .12s;font-size:0.9rem;border-left:3px solid transparent}
+#sidebar .nav-item:hover{background:rgba(56,189,248,.08);color:var(--text)}
+#sidebar .nav-item.active{background:rgba(56,189,248,.12);color:var(--primary);border-left-color:var(--primary)}
+#sidebar .nav-item .icon{width:18px;text-align:center;font-size:1rem}
+#sidebar .nav-group .group-title{display:flex;align-items:center;gap:.5rem;padding:.5rem 1rem;color:var(--text-dim);font-size:0.8rem;text-transform:uppercase;letter-spacing:.05em;cursor:pointer;transition:color .12s}
+#sidebar .nav-group .group-title:hover{color:var(--text-muted)}
+#sidebar .nav-group .group-title .arrow{transition:transform .15s;margin-left:auto;font-size:.7rem}
+#sidebar .nav-group .group-title .arrow.open{transform:rotate(90deg)}
+#sidebar .nav-group .sub-items{overflow:hidden;max-height:0;transition:max-height .2s}
+#sidebar .nav-group .sub-items.open{max-height:600px}
+#sidebar .nav-group .sub-items .nav-item{padding-left:2rem;font-size:0.85rem}
+
+#main{flex:1;margin-left:var(--sidebar-w);display:flex;flex-direction:column}
+#topbar{height:var(--topbar-h);background:var(--card);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;padding:0 1.5rem;position:sticky;top:0;z-index:50}
+#topbar .page-title{font-size:1.1rem;font-weight:600}
+#topbar .user-info{display:flex;align-items:center;gap:.75rem;font-size:0.85rem;color:var(--text-muted)}
+#topbar .user-info .username{color:var(--text)}
+#topbar .logout-btn{background:none;border:1px solid var(--border);color:var(--text-muted);padding:4px 12px;border-radius:6px;font-size:0.8rem;transition:all .12s}
+#topbar .logout-btn:hover{border-color:var(--error);color:var(--error)}
+#content{padding:1.5rem;max-width:1200px;width:100%;margin:0 auto}
+
+/* Login page */
+#login-page{min-height:100vh;display:flex;align-items:center;justify-content:center;background:var(--bg);padding:1rem}
+.login-card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:2.5rem;width:100%;max-width:400px}
+.login-card h1{font-size:1.75rem;font-weight:700;background:linear-gradient(135deg,var(--primary),var(--secondary));-webkit-background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:.25rem;text-align:center}
+.login-card .subtitle{color:var(--text-dim);text-align:center;margin-bottom:1.5rem;font-size:0.9rem}
+.login-card .field{margin-bottom:1rem}
+.login-card .field label{display:block;font-size:0.85rem;color:var(--text-muted);margin-bottom:4px}
+.login-card .field input{background:var(--bg)}
+.login-card .login-btn{width:100%;padding:10px;font-size:1rem;margin-top:.5rem}
+.login-card .login-error{background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);border-radius:6px;padding:8px 12px;color:var(--error);font-size:0.85rem;margin-bottom:1rem;display:none}
+.login-card .login-error.show{display:block}
+.login-card .loading-bar{height:3px;background:linear-gradient(90deg,var(--primary),var(--secondary));border-radius:2px;margin-top:1rem;animation:shimmer 1.2s ease-in-out infinite;display:none}
+.login-card .loading-bar.show{display:block}
+@keyframes shimmer{0%{opacity:.4}50%{opacity:1}100%{opacity:.4}}
+
+/* Cards grid */
+.card-grid{display:grid;gap:1rem}
+.card-grid-2{grid-template-columns:1fr 1fr}
+.card-grid-3{grid-template-columns:1fr 1fr 1fr}
+.card-grid-4{grid-template-columns:1fr 1fr}
+@media(min-width:768px){.card-grid-4{grid-template-columns:1fr 1fr}}
+@media(min-width:1024px){.card-grid-4{grid-template-columns:repeat(4,1fr)}}
+.stat-card{padding:1.25rem}
+.stat-card .label{color:var(--text-dim);font-size:0.8rem;text-transform:uppercase;letter-spacing:.04em}
+.stat-card .value{font-size:1.5rem;font-weight:700;margin-top:4px}
+.stat-card .sub-value{font-size:0.8rem;color:var(--text-muted);margin-top:2px}
+
+/* Progress bars */
+.progress-bar{height:8px;background:var(--bg);border-radius:4px;overflow:hidden;margin-top:6px}
+.progress-bar .fill{height:100%;border-radius:4px;transition:width .4s}
+.progress-bar .fill.green{background:var(--success)}
+.progress-bar .fill.blue{background:var(--primary)}
+.progress-bar .fill.orange{background:var(--warning)}
+.progress-bar .fill.red{background:var(--error)}
+
+/* Table */
+.table-wrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:0.875rem}
+th,td{padding:.5rem .75rem;text-align:left;border-bottom:1px solid var(--border);white-space:nowrap}
+th{color:var(--text-dim);font-weight:600;font-size:0.8rem;text-transform:uppercase;letter-spacing:.03em}
+tr:hover td{background:rgba(56,189,248,.04)}
+td.clickable{cursor:pointer;color:var(--primary)}
+td.clickable:hover{text-decoration:underline}
+
+/* File Manager */
+.file-path{display:flex;gap:.5rem;margin-bottom:1rem}
+.file-path input{flex:1}
+.file-list-table td:nth-child(2){text-align:right;color:var(--text-muted);font-variant-numeric:tabular-nums}
+.file-list-table td:nth-child(3){color:var(--text-dim);font-size:0.8rem}
+
+/* Container badges */
+.status-badge{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:10px;font-size:0.75rem;font-weight:600}
+.status-badge.running{background:rgba(34,197,94,.15);color:var(--success)}
+.status-badge.exited,.status-badge.paused{background:rgba(245,158,11,.15);color:var(--warning)}
+.status-badge.created,.status-badge.restarting{background:rgba(56,189,248,.15);color:var(--primary)}
+.status-badge.removing,.status-badge.dead{background:rgba(239,68,68,.15);color:var(--error)}
+
+/* File content viewer */
+.content-area{width:100%;min-height:400px;font-family:'Cascadia Code','Fira Code','JetBrains Mono',monospace;font-size:0.85rem;line-height:1.5;padding:.75rem;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);resize:vertical;tab-size:4}
+.content-toolbar{display:flex;gap:.5rem;margin-bottom:.75rem;align-items:center}
+
+/* System info */
+.sys-table td:first-child{color:var(--text-dim);width:180px;font-weight:500}
+.sys-table td:last-child{color:var(--text)}
+
+/* Disk detail rows */
+.disk-row{display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);font-size:0.85rem}
+.disk-row:last-child{border-bottom:none}
+.disk-row .mount{color:var(--text-muted)}
+.disk-row .usage{font-variant-numeric:tabular-nums}
+
+/* Empty state */
+.empty-state{text-align:center;padding:3rem 1rem;color:var(--text-dim)}
+.empty-state .icon{font-size:3rem;margin-bottom:.5rem;opacity:.3}
+
+/* CPU bars */
+.cpu-grid{display:grid;grid-template-columns:1fr 1fr;gap:4px 12px}
+.cpu-item{font-size:0.8rem}
+.cpu-item .bar{height:6px;background:var(--bg);border-radius:3px;overflow:hidden;margin-top:2px}
+.cpu-item .bar .fill{height:100%;border-radius:3px;transition:width .4s}
+.cpu-label{display:flex;justify-content:space-between;color:var(--text-dim)}
+
+/* Mobile */
+@media(max-width:768px){
+  #sidebar{transform:translateX(-100%)}
+  #sidebar.open{transform:translateX(0)}
+  #main{margin-left:0}
+  #content{padding:1rem}
+  .card-grid-2,.card-grid-3,.card-grid-4{grid-template-columns:1fr}
+  #topbar .page-title{font-size:0.95rem}
+  #topbar{padding:0 1rem}
+}
+#sidebar-toggle{display:none;background:none;border:none;color:var(--text);font-size:1.25rem;padding:4px;cursor:pointer}
+@media(max-width:768px){
+  #sidebar-toggle{display:block}
+}
+#sidebar-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:99}
+@media(max-width:768px){
+  #sidebar-overlay.show{display:block}
+}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+(function(){
+"use strict";
+
+// ── MD5 ──
+const MD5_S = [7,12,17,22,5,9,14,20,4,11,16,23,6,10,15,21];
+const MD5_K = new Uint32Array(64);
+for(let i=0;i<64;i++) MD5_K[i] = Math.abs(Math.sin(i+1)) * 0x100000000 | 0;
+
+function md5_cycle(x,k) {
+  let a=x[0],b=x[1],c=x[2],d=x[3];
+  for(let i=0;i<64;i++){
+    let f,g;
+    if(i<16){f=(b&c)|(~b&d);g=i}
+    else if(i<32){f=(d&b)|(~d&c);g=(5*i+1)&15}
+    else if(i<48){f=b^c^d;g=(3*i+5)&15}
+    else{f=c^(b|~d);g=(7*i)&15}
+    f = (f + a + MD5_K[i] + k[g]) | 0;
+    const s = MD5_S[i%4 + ((i>>4)<<2)];
+    a = d; d = c; c = b;
+    b = (b + ((f << s) | (f >>> (32 - s)))) | 0;
+  }
+  x[0] = (x[0] + a) | 0;
+  x[1] = (x[1] + b) | 0;
+  x[2] = (x[2] + c) | 0;
+  x[3] = (x[3] + d) | 0;
+}
+function md5(str){
+  const bytes = [];
+  for(let i=0;i<str.length;i++){
+    let c = str.charCodeAt(i);
+    if(c<128) bytes.push(c);
+    else if(c<2048){bytes.push(192|c>>6);bytes.push(128|(c&63))}
+    else{bytes.push(224|c>>12);bytes.push(128|(c>>6&63));bytes.push(128|(c&63))}
+  }
+  const orig_len = bytes.length;
+  bytes.push(0x80);
+  while(bytes.length%64!==56) bytes.push(0);
+  const bit_len = orig_len * 8;
+  bytes.push(bit_len & 0xff);
+  bytes.push((bit_len >> 8) & 0xff);
+  bytes.push((bit_len >> 16) & 0xff);
+  bytes.push((bit_len >> 24) & 0xff);
+  bytes.push(0); bytes.push(0); bytes.push(0); bytes.push(0);
+  const h = [0x67452301,0xefcdab89,0x98badcfe,0x10325476];
+  const w = new Int32Array(16);
+  for(let i=0;i<bytes.length;i+=64){
+    for(let j=0;j<16;j++) w[j]=bytes[i+4*j]|(bytes[i+4*j+1]<<8)|(bytes[i+4*j+2]<<16)|(bytes[i+4*j+3]<<24);
+    md5_cycle(h,w);
+  }
+  let hex='';
+  for(let i=0;i<4;i++) for(let j=0;j<4;j++) hex+=((h[i]>>>(j*8))&0xff).toString(16).padStart(2,'0');
+  return hex;
+}
+
+// ── SM4 ──
+const S8=[0xd6,0x90,0xe9,0xfe,0xcc,0xe1,0x3d,0xb7,0x16,0xb6,0x14,0xc2,0x28,0xfb,0x2c,0x05,0x2b,0x67,0x9a,0x76,0x2a,0xbe,0x04,0xc3,0xaa,0x44,0x13,0x26,0x49,0x86,0x06,0x99,0x9c,0x42,0x50,0xf4,0x91,0xef,0x98,0x7a,0x33,0x54,0x0b,0x43,0xed,0xcf,0xac,0x62,0xe4,0xb3,0x1c,0xa9,0xc9,0x08,0xe8,0x95,0x80,0xdf,0x94,0xfa,0x75,0x8f,0x3f,0xa6,0x47,0x07,0xa7,0xfc,0xf3,0x73,0x17,0xba,0x83,0x59,0x3c,0x19,0xe6,0x85,0x4f,0xa8,0x68,0x6b,0x81,0xb2,0x71,0x64,0xda,0x8b,0xf8,0xeb,0x0f,0x4b,0x70,0x56,0x9d,0x35,0x1e,0x24,0x0e,0x5e,0x63,0x58,0xd1,0xa2,0x25,0x22,0x7c,0x3b,0x01,0x21,0x78,0x87,0xd4,0x00,0x46,0x57,0x9f,0xd3,0x27,0x52,0x4c,0x36,0x02,0xe7,0xa0,0xc4,0xc8,0x9e,0xea,0xbf,0x8a,0xd2,0x40,0xc7,0x38,0xb5,0xa3,0xf7,0xf2,0xce,0xf9,0x61,0x15,0xa1,0xe0,0xae,0x5d,0xa4,0x9b,0x34,0x1a,0x55,0xad,0x93,0x32,0x30,0xf5,0x8c,0xb1,0xe3,0x1d,0xf6,0xe2,0x2e,0x82,0x66,0xca,0x60,0xc0,0x29,0x23,0xab,0x0d,0x53,0x4e,0x6f,0xd5,0xdb,0x37,0x45,0xde,0xfd,0x8e,0x2f,0x03,0xff,0x6a,0x72,0x6d,0x6c,0x5b,0x51,0x8d,0x1b,0xaf,0x92,0xbb,0xdd,0xbc,0x7f,0x11,0xd9,0x5c,0x41,0x1f,0x10,0x5a,0xd8,0x0a,0xc1,0x31,0x88,0xa5,0xcd,0x7b,0xbd,0x2d,0x74,0xd0,0x12,0xb8,0xe5,0xb4,0xb0,0x89,0x69,0x97,0x4a,0x0c,0x96,0x77,0x7e,0x65,0xb9,0xf1,0x09,0xc5,0x6e,0xc6,0x84,0x18,0xf0,0x7d,0xec,0x3a,0xdc,0x4d,0x20,0x79,0xee,0x5f,0x3e,0xd7,0xcb,0x39,0x48];
+const FK=[0xa3b1bac6,0x56aa3350,0x677d9197,0xb27022dc];
+const CK=[0x00070e15,0x1c232a31,0x383f464d,0x545b6269,0x70777e85,0x8c939aa1,0xa8afb6bd,0xc4cbd2d9,0xe0e7eef5,0xfc030a11,0x181f262d,0x343b4249,0x50575e65,0x6c737a81,0x888f969d,0xa4abb2b9,0xc0c7ced5,0xdce3eaf1,0xf8ff060d,0x141b2229,0x30373e45,0x4c535a61,0x686f767d,0x848b9299,0xa0a7aeb5,0xbcc3cad1,0xd8dfe6ed,0xf4fb0209,0x10171e25,0x2c333a41,0x484f565d,0x646b7279];
+
+function rotl32(x,n){return((x<<n)|(x>>>(32-n)))>>>0}
+function tau(x){
+  return(S8[(x>>>24)&0xff]<<24)|(S8[(x>>>16)&0xff]<<16)|(S8[(x>>>8)&0xff]<<8)|S8[x&0xff]
+}
+function L(b){return b^rotl32(b,2)^rotl32(b,10)^rotl32(b,18)^rotl32(b,24)}
+function Lp(b){return b^rotl32(b,13)^rotl32(b,23)}
+function T(a){return L(tau(a))}
+function Tp(a){return Lp(tau(a))}
+
+function expandKey(keyHex){
+  const mk=[];
+  for(let i=0;i<4;i++)mk[i]=parseInt(keyHex.substr(i*8,8),16);
+  const K=new Uint32Array(36);
+  const rk=new Uint32Array(32);
+  for(let i=0;i<4;i++)K[i]=(mk[i]^FK[i])>>>0;
+  for(let i=0;i<32;i++){
+    const t=(K[i+1]^K[i+2]^K[i+3]^CK[i])>>>0;
+    K[i+4]=(K[i]^Tp(t))>>>0;
+    rk[i]=K[i+4];
+  }
+  return rk;
+}
+
+function encryptBlock(X0,X1,X2,X3,rk){
+  let x=[X0,X1,X2,X3];
+  for(let i=0;i<32;i++){
+    const t=(x[1]^x[2]^x[3]^rk[i])>>>0;
+    x.push((x[0]^T(t))>>>0);
+    x.shift();
+  }
+  return[x[3],x[2],x[1],x[0]];
+}
+
+function decryptBlock(X0,X1,X2,X3,rk){
+  let x=[X0,X1,X2,X3];
+  for(let i=0;i<32;i++){
+    const t=(x[1]^x[2]^x[3]^rk[31-i])>>>0;
+    x.push((x[0]^T(t))>>>0);
+    x.shift();
+  }
+  return[x[3],x[2],x[1],x[0]];
+}
+
+function hex2bytes(h){
+  const b=[];
+  for(let i=0;i<h.length;i+=2)b.push(parseInt(h.substr(i,2),16));
+  return b;
+}
+function bytes2hex(b){
+  let h='';
+  for(let i=0;i<b.length;i++)h+=((b[i]&0xff)>>>0).toString(16).padStart(2,'0');
+  return h;
+}
+function bytes2words(b){
+  const w=[];
+  for(let i=0;i<b.length;i+=4)w.push(((b[i]<<24)|(b[i+1]<<16)|(b[i+2]<<8)|b[i+3])>>>0);
+  return w;
+}
+function words2bytes(w){
+  const b=[];
+  for(let i=0;i<w.length;i++){b.push((w[i]>>>24)&0xff);b.push((w[i]>>>16)&0xff);b.push((w[i]>>>8)&0xff);b.push(w[i]&0xff)}
+  return b;
+}
+function str2utf8(s){return Array.from(new TextEncoder().encode(s))}
+function utf82str(b){return new TextDecoder().decode(new Uint8Array(b))}
+
+function pkcs7pad(d){const n=16-(d.length%16);const r=[...d];for(let i=0;i<n;i++)r.push(n);return r}
+function pkcs7unpad(d){
+  const n=d[d.length-1];
+  if(n<1||n>16)throw new Error('invalid pkcs7 padding');
+  return d.slice(0,d.length-n);
+}
+
+function sm4_cbc_encrypt_hex(plain,keyHex,ivHex){
+  const keyB=hex2bytes(keyHex),ivB=hex2bytes(ivHex);
+  const pb=str2utf8(plain),padded=pkcs7pad(pb);
+  const rk=expandKey(keyHex);
+  let prev=bytes2words(ivB);
+  const out=[];
+  for(let i=0;i<padded.length;i+=16){
+    let w=bytes2words(padded.slice(i,i+16));
+    for(let j=0;j<4;j++)w[j]=(w[j]^prev[j])>>>0;
+    const e=encryptBlock(w[0],w[1],w[2],w[3],rk);
+    out.push(...e);prev=e;
+  }
+  return bytes2hex(words2bytes(out));
+}
+
+function sm4_cbc_decrypt_hex(cipherHex,keyHex,ivHex){
+  const cb=hex2bytes(cipherHex);
+  if(cb.length%16!==0)throw new Error('ciphertext length not multiple of 16');
+  const rk=expandKey(keyHex);
+  let prev=bytes2words(hex2bytes(ivHex));
+  const out=[];
+  for(let i=0;i<cb.length;i+=16){
+    const w=bytes2words(cb.slice(i,i+16));
+    const d=decryptBlock(w[0],w[1],w[2],w[3],rk);
+    for(let j=0;j<4;j++)d[j]=(d[j]^prev[j])>>>0;
+    out.push(...words2bytes(d));prev=w;
+  }
+  const unp=pkcs7unpad(out);
+  return utf82str(unp);
+}
+
+// ── Config ──
+const SECURITY_DIR = 'dfhg156d1';
+
+// ── API ──
+const API_BASE = '/api/v1';
+
+function getToken(){return localStorage.getItem('token')}
+function setToken(t){localStorage.setItem('token',t)}
+function clearToken(){localStorage.removeItem('token');localStorage.removeItem('user')}
+
+async function api(path,opts={}){
+  const h=opts.headers||{};
+  const t=getToken();
+  if(t)h['Authorization']='Bearer '+t;
+  if(opts.body&&!(opts.body instanceof FormData)&&!h['Content-Type'])h['Content-Type']='application/json';
+  const r=await fetch(API_BASE+path,{...opts,headers:h});
+  if(r.status===401){clearToken();navigate('/login');throw new Error('Unauthorized')}
+  const j=await r.json();
+  return j;
+}
+
+function apiUrl(path){return API_BASE+path}
+
+// ── Router ──
+function getHash(){return window.location.hash.replace(/^#\//,'/').split('?')[0]||'/home'}
+function getHashParams(){
+  const m=window.location.hash.match(/\?(.+)/);
+  if(!m)return{};
+  const p={};
+  m[1].split('&').forEach(kv=>{const[k,v]=kv.split('=');if(k)p[decodeURIComponent(k)]=decodeURIComponent(v||'')});
+  return p;
+}
+
+let currentRoute='';
+function navigate(path,params){
+  let h='#/'+path.replace(/^\//,'');
+  if(params){
+    const s=Object.entries(params).map(([k,v])=>encodeURIComponent(k)+'='+encodeURIComponent(v)).join('&');
+    if(s)h+='?'+s;
+  }
+  window.location.hash=h;
+}
+
+function initRouter(){
+  function handle(){
+    const route=getHash();
+    if(route===currentRoute&&route!=='/login')return;
+    currentRoute=route;
+    render(route);
+  }
+  window.addEventListener('hashchange',handle);
+  handle();
+}
+
+// ── Render ──
+const $app=document.getElementById('app');
+
+function render(route){
+  const token=getToken();
+  if(route==='/login')return renderLogin();
+  if(!token)return navigate('/login');
+  if(route.startsWith('/file/view'))return layout(renderFileContent,route);
+  if(route==='/home')return layout(renderDashboard,route);
+  if(route==='/file/list')return layout(renderFileList,route);
+  if(route==='/docker/containers')return layout(renderDocker,route);
+  if(route==='/system/info')return layout(renderSystemInfo,route);
+  layout(renderDashboard,route);
+}
+
+function layout(pageFn,route){
+  const token=getToken();
+  if(!token){navigate('/login');return}
+  $app.innerHTML='<div id="sidebar"></div><div id="main"><div id="topbar"></div><div id="content"></div></div>';
+  renderSidebar(route);
+  renderTopbar(route);
+  pageFn(route);
+}
+
+// ── Sidebar ──
+let cachedMenus=null;
+async function loadMenus(){
+  if(cachedMenus)return cachedMenus;
+  try{
+    const j=await api('/user/menus');
+    const menus = (j.data && j.data.menus) ? j.data.menus : (j.menus || j.data || []);
+    if(Array.isArray(menus))cachedMenus=menus;
+    else cachedMenus=[];
+  }catch(e){cachedMenus=[]}
+  return cachedMenus;
+}
+
+function routeFromMenuPath(p){
+  if(!p||p==='/')return '/home';
+  return p;
+}
+
+function renderSidebar(activeRoute){
+  const sb=document.getElementById('sidebar');
+  if(!sb)return;
+  const userInfo=JSON.parse(localStorage.getItem('user')||'{}');
+  sb.innerHTML='<div class="logo">RustPanel<span>Server Management</span></div><div class="nav" id="sidebar-nav"><div class="nav-loading" style="padding:1rem;color:var(--text-dim);font-size:0.85rem;text-align:center">Loading...</div></div>';
+  loadMenus().then(menus=>{
+    const nav=document.getElementById('sidebar-nav');
+    if(!nav)return;
+    let html='';
+    if(menus.length===0){
+      html+=`<div class="nav-item${activeRoute==='/home'?' active':''}" data-route="/home"><span class="icon">⌂</span> Dashboard</div>`;
+      html+=`<div class="nav-item${activeRoute==='/file/list'?' active':''}" data-route="/file/list"><span class="icon">📁</span> Files</div>`;
+      html+=`<div class="nav-item${activeRoute==='/docker/containers'?' active':''}" data-route="/docker/containers"><span class="icon">🐳</span> Docker</div>`;
+      html+=`<div class="nav-item${activeRoute==='/system/info'?' active':''}" data-route="/system/info"><span class="icon">ℹ</span> System Info</div>`;
+    } else {
+      menus.forEach(item=>{
+        const r=routeFromMenuPath(item.path);
+        const hasChildren=item.children&&item.children.length>0;
+        if(hasChildren){
+          const open=item.children.some(c=>activeRoute===routeFromMenuPath(c.path));
+          html+=`<div class="nav-group">`;
+          html+=`<div class="group-title" data-toggle="${item.key||''}"><span class="icon">${getMenuIcon(item.icon)}</span>${item.name}<span class="arrow${open?' open':''}">▶</span></div>`;
+          html+=`<div class="sub-items${open?' open':''}" data-group="${item.key||''}">`;
+          item.children.forEach(child=>{
+            const cr=routeFromMenuPath(child.path);
+            html+=`<div class="nav-item${activeRoute===cr?' active':''}" data-route="${cr}"><span class="icon">${getMenuIcon(child.icon)}</span>${child.name}</div>`;
+          });
+          html+=`</div></div>`;
+        } else {
+          html+=`<div class="nav-item${activeRoute===r?' active':''}" data-route="${r}"><span class="icon">${getMenuIcon(item.icon)}</span>${item.name}</div>`;
+        }
+      });
+    }
+    nav.innerHTML=html;
+    sb.querySelectorAll('.nav-item[data-route]').forEach(el=>{
+      el.addEventListener('click',()=>navigate(el.dataset.route));
+    });
+    sb.querySelectorAll('.group-title').forEach(el=>{
+      el.addEventListener('click',function(){
+        const sub=this.parentElement.querySelector('.sub-items');
+        const arrow=this.querySelector('.arrow');
+        if(sub){
+          const isOpen=sub.classList.toggle('open');
+          if(arrow)arrow.classList.toggle('open',isOpen);
+        }
+      });
+    });
+  }).catch(()=>{
+    const nav=document.getElementById('sidebar-nav');
+    if(nav)nav.innerHTML='<div style="padding:1rem;color:var(--text-dim);font-size:0.85rem;text-align:center">Menu load failed</div>';
+  });
+}
+
+function getMenuIcon(icon){
+  if(!icon)return '▫';
+  const name=String(icon).toLowerCase();
+  if(name.includes('home'))return '⌂';
+  if(name.includes('file'))return '📁';
+  if(name.includes('global')||name.includes('web'))return '🌐';
+  if(name.includes('setting'))return '⚙';
+  if(name.includes('pie')||name.includes('chart')||name.includes('data'))return '📊';
+  if(name.includes('team')||name.includes('user'))return '👥';
+  if(name.includes('idcard')||name.includes('admin'))return '🛡';
+  if(name.includes('rocket')||name.includes('online'))return '🚀';
+  if(name.includes('docker')||name.includes('container'))return '🐳';
+  if(name.includes('info')||name.includes('system'))return 'ℹ';
+  return '▫';
+}
+
+// ── Topbar ──
+function renderTopbar(route){
+  const tb=document.getElementById('topbar');
+  if(!tb)return;
+  const userInfo=JSON.parse(localStorage.getItem('user')||'{}');
+  const pageNames={'/home':'Dashboard','/file/list':'File Manager','/docker/containers':'Docker Containers','/system/info':'System Information'};
+  const baseRoute=route.split('?')[0];
+  let title=pageNames[baseRoute]||'RustPanel';
+  if(baseRoute.startsWith('/file/view'))title='File Viewer';
+  tb.innerHTML=`<button id="sidebar-toggle" aria-label="Menu">☰</button><span class="page-title">${title}</span><div class="user-info"><span class="username">${userInfo.username||'User'}</span><button class="logout-btn" id="logout-btn">Logout</button></div>`;
+  document.getElementById('logout-btn')?.addEventListener('click',()=>{clearToken();cachedMenus=null;navigate('/login')});
+  document.getElementById('sidebar-toggle')?.addEventListener('click',()=>{
+    const sb=document.getElementById('sidebar');
+    if(sb)sb.classList.toggle('open');
+    const ov=document.getElementById('sidebar-overlay');
+    if(ov)ov.classList.toggle('show');
+  });
+}
+
+// ── Login ──
+function renderLogin(){
+  $app.innerHTML=`
+  <div id="login-page">
+    <div class="login-card">
+      <h1>RustPanel</h1>
+      <p class="subtitle">Server Management Panel</p>
+      <div class="login-error" id="login-error"></div>
+      <div class="field">
+        <label for="login-username">Username</label>
+        <input type="text" id="login-username" autocomplete="username" placeholder="Enter username">
+      </div>
+      <div class="field">
+        <label for="login-password">Password</label>
+        <input type="password" id="login-password" autocomplete="current-password" placeholder="Enter password">
+      </div>
+      <button class="btn login-btn" id="login-btn">Sign In</button>
+      <div class="loading-bar" id="login-loading"></div>
+    </div>
+  </div>`;
+  const params=getHashParams();
+  const vParam=params.v||SECURITY_DIR;
+
+  const errEl=document.getElementById('login-error');
+  const btn=document.getElementById('login-btn');
+  const unEl=document.getElementById('login-username');
+  const pwEl=document.getElementById('login-password');
+  const loadingEl=document.getElementById('login-loading');
+
+  function showErr(msg){errEl.textContent=msg;errEl.classList.add('show')}
+  function hideErr(){errEl.classList.remove('show')}
+
+  async function doLogin(){
+    hideErr();
+    const username=unEl.value.trim();
+    const password=pwEl.value;
+    if(!username||!password){showErr('Please enter username and password');return}
+    btn.disabled=true;btn.textContent='Signing in...';loadingEl.classList.add('show');
+    try{
+      const ts=Date.now();
+      const iv=md5(vParam);
+      const keyWithToken=vParam+String(ts)+iv;
+      const encKey=md5(keyWithToken);
+      const encUsername=sm4_cbc_encrypt_hex(username,encKey,iv);
+      const encPassword=sm4_cbc_encrypt_hex(password,encKey,iv);
+      const j=await fetch(apiUrl('/login/sign/'+encodeURIComponent(vParam)),{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({username:encUsername,password:encPassword,timestamp:ts})
+      }).then(r=>r.json());
+      if(j.success&&j.data&&j.data.token){
+        setToken(j.data.token);
+        if(j.data.user)localStorage.setItem('user',JSON.stringify(j.data.user));
+        cachedMenus=null;
+        navigate('/home');
+      } else {
+        const msg=j.message||'Login failed';
+        if(msg.includes('username_band')||msg.includes('band'))showErr('Account has been locked');
+        else if(msg.includes('password_error'))showErr('Incorrect password');
+        else if(msg.includes('username_error'))showErr('Username does not exist');
+        else showErr(msg);
+      }
+    }catch(e){
+      if(e.message==='Unauthorized')return;
+      showErr('Connection error: '+e.message);
+    }finally{
+      btn.disabled=false;btn.textContent='Sign In';loadingEl.classList.remove('show');
+    }
+  }
+
+  btn.addEventListener('click',doLogin);
+  pwEl.addEventListener('keydown',e=>{if(e.key==='Enter')doLogin()});
+}
+
+// ── Dashboard ──
+async function renderDashboard(){
+  const c=document.getElementById('content');
+  if(!c)return;
+  c.innerHTML='<div style="text-align:center;padding:2rem;color:var(--text-dim)">Loading system info...</div>';
+  try{
+    const j=await api('/os_info');
+    if(!j.success||!j.data){c.innerHTML='<div class="error-msg">Failed to load system info</div>';return}
+    const d=j.data;
+    const os=d.os||{};
+    const mem=d.memory||{};
+    const cpu=d.cpu||[];
+    const disk=d.disk||[];
+    const net=d.network||[];
+
+    const memTotal=mem.total||0;
+    const memUsed=mem.used||0;
+    const memPct=memTotal>0?((memUsed/memTotal)*100).toFixed(1):0;
+    const swapTotal=mem.swap_total||0;
+    const swapUsed=mem.swap_used||0;
+
+    let cpuAvg=0;
+    if(cpu.length>0){cpuAvg=(cpu.reduce((a,b)=>a+b,0)/cpu.length).toFixed(1)}
+
+    let diskRows='';
+    disk.forEach(dd=>{
+      const total=(dd.total||1);
+      const avail=(dd.available||0);
+      const used=total-avail;
+      const pct=((used/total)*100).toFixed(1);
+      diskRows+=`<div class="disk-row"><span class="mount">${dd.mount_point||'?'}</span><span class="usage">${formatSize(used*1048576)} / ${formatSize(total*1048576)} (${pct}%)</span></div>`;
+    });
+
+    let cpuBars='';
+    cpu.forEach((val,i)=>{
+      const pct=Math.min(val,100).toFixed(1);
+      const color=pct>80?'red':pct>50?'orange':'green';
+      cpuBars+=`<div class="cpu-item"><div class="cpu-label"><span>CPU #${i}</span><span>${pct}%</span></div><div class="bar"><div class="fill ${color}" style="width:${pct}%"></div></div></div>`;
+    });
+
+    c.innerHTML=`
+    <div class="card-grid card-grid-4 mb-4">
+      <div class="card stat-card"><div class="label">CPU Usage</div><div class="value" style="color:${cpuAvg>80?'var(--error)':cpuAvg>50?'var(--warning)':'var(--success)'}">${cpuAvg}%</div><div class="sub-value">${cpu.length} cores</div></div>
+      <div class="card stat-card"><div class="label">Memory</div><div class="value" style="color:var(--primary)">${memPct}%</div><div class="sub-value">${formatSize(memUsed*1048576)} / ${formatSize(memTotal*1048576)}</div></div>
+      <div class="card stat-card"><div class="label">Swap</div><div class="value" style="color:var(--secondary)">${swapTotal>0?((swapUsed/swapTotal)*100).toFixed(1):0}%</div><div class="sub-value">${formatSize(swapUsed*1048576)} / ${formatSize(swapTotal*1048576)}</div></div>
+      <div class="card stat-card"><div class="label">Kernel</div><div class="value" style="color:var(--text)">${os.kernel_version||'N/A'}</div><div class="sub-value">${os.host_name||os.hostname||''}</div></div>
+    </div>
+    <div class="card-grid card-grid-2">
+      <div class="card">
+        <h3 style="font-size:0.95rem;margin-bottom:.75rem;color:var(--text-muted)">CPU Cores</h3>
+        <div class="cpu-grid">${cpuBars||'<div class="text-muted text-sm">No data</div>'}</div>
+      </div>
+      <div class="card">
+        <h3 style="font-size:0.95rem;margin-bottom:.75rem;color:var(--text-muted)">Memory Usage</h3>
+        <div class="text-sm" style="display:flex;justify-content:space-between;margin-bottom:4px"><span>RAM</span><span>${formatSize(memUsed*1048576)} / ${formatSize(memTotal*1048576)}</span></div>
+        <div class="progress-bar"><div class="fill ${memPct>80?'red':memPct>50?'orange':'blue'}" style="width:${Math.min(memPct,100)}%"></div></div>
+        ${swapTotal>0?`
+        <div class="text-sm mt-3" style="display:flex;justify-content:space-between;margin-bottom:4px"><span>Swap</span><span>${formatSize(swapUsed*1048576)} / ${formatSize(swapTotal*1048576)}</span></div>
+        <div class="progress-bar"><div class="fill ${(swapUsed/swapTotal)>0.8?'red':(swapUsed/swapTotal)>0.5?'orange':'blue'}" style="width:${Math.min((swapUsed/swapTotal)*100,100)}%"></div></div>
+        `:''}
+      </div>
+    </div>
+    <div class="card mt-4">
+      <h3 style="font-size:0.95rem;margin-bottom:.75rem;color:var(--text-muted)">Disk Usage</h3>
+      ${diskRows||'<div class="text-muted text-sm">No disk data</div>'}
+    </div>
+    ${net.length>0?`
+    <div class="card mt-4">
+      <h3 style="font-size:0.95rem;margin-bottom:.75rem;color:var(--text-muted)">Network Interfaces</h3>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Interface</th><th>Received</th><th>Transmitted</th></tr></thead>
+        <tbody>${net.map(n=>`<tr><td>${n.name||'?'}</td><td>${formatSize((n.total_received||0)*1024)}</td><td>${formatSize((n.total_transmitted||0)*1024)}</td></tr>`).join('')}</tbody>
+      </table></div>
+    </div>`:''}`;
+  }catch(e){
+    if(e.message!=='Unauthorized')c.innerHTML=`<div class="error-msg">Error: ${e.message}</div>`;
+  }
+}
+
+function formatSize(bytes){
+  if(bytes===0)return '0 B';
+  const units=['B','KB','MB','GB','TB'];
+  const i=Math.floor(Math.log(bytes)/Math.log(1024));
+  return (bytes/Math.pow(1024,i)).toFixed(i>0?1:0)+' '+units[i];
+}
+
+// ── File Manager ──
+let fileListState={path:'/',page:1};
+
+async function renderFileList(){
+  const c=document.getElementById('content');
+  if(!c)return;
+  c.innerHTML=`
+  <div class="file-path">
+    <input type="text" id="file-path-input" value="${fileListState.path}" placeholder="/">
+    <button class="btn btn-sm" id="file-go-btn">Go</button>
+  </div>
+  <div class="card" id="file-list-container">
+    <div style="text-align:center;padding:2rem;color:var(--text-dim)">Loading...</div>
+  </div>`;
+
+  document.getElementById('file-go-btn').addEventListener('click',()=>{
+    fileListState.path=document.getElementById('file-path-input').value.trim()||'/';
+    fileListState.page=1;
+    loadFileList();
+  });
+  document.getElementById('file-path-input').addEventListener('keydown',e=>{
+    if(e.key==='Enter')document.getElementById('file-go-btn').click();
+  });
+
+  await loadFileList();
+}
+
+async function loadFileList(){
+  const container=document.getElementById('file-list-container');
+  if(!container)return;
+  container.innerHTML='<div style="text-align:center;padding:2rem;color:var(--text-dim)">Loading...</div>';
+  try{
+    const path=fileListState.path||'/';
+    const j=await api('/file/list?path='+encodeURIComponent(path)+'&current='+fileListState.page+'&pageSize=50');
+    if(!j.success){container.innerHTML='<div class="error-msg">Failed to load directory</div>';return}
+    const d=j.data;
+    let html='<div class="table-wrap"><table class="file-list-table"><thead><tr><th>Name</th><th>Size</th><th>Modified</th></tr></thead><tbody>';
+    if(d.path&&d.path!==path){
+      const parent=d.path.replace(/\/?[^\/]*\/?$/,'')||'/';
+      html+=`<tr><td class="clickable" data-path="${escapeHtml(parent)}">.. (parent)</td><td></td><td></td></tr>`;
+    }
+    (d.dirs||[]).forEach(dir=>{
+      const fullPath=(path.endsWith('/')?path:path+'/')+dir.name;
+      html+=`<tr><td class="clickable" data-path="${escapeHtml(fullPath)}" data-type="dir">📁 ${escapeHtml(dir.name)}</td><td></td><td>${dir.modified_time?formatTime(dir.modified_time):''}</td></tr>`;
+    });
+    (d.files||[]).forEach(f=>{
+      const fullPath=(path.endsWith('/')?path:path+'/')+f.name;
+      html+=`<tr><td class="clickable" data-path="${escapeHtml(fullPath)}" data-type="file">${escapeHtml(f.name)}</td><td>${f.size!=null?formatSize(f.size):''}</td><td>${f.modified_time?formatTime(f.modified_time):''}</td></tr>`;
+    });
+    html+='</tbody></table></div>';
+    container.innerHTML=html;
+    container.querySelectorAll('[data-path]').forEach(el=>{
+      el.addEventListener('click',function(){
+        const p=this.dataset.path;
+        const type=this.dataset.type;
+        if(type==='dir'){
+          fileListState.path=p;
+          fileListState.page=1;
+          loadFileList();
+        } else {
+          navigate('/file/view',{path:p});
+        }
+      });
+    });
+  }catch(e){
+    if(e.message!=='Unauthorized')container.innerHTML=`<div class="error-msg">Error: ${e.message}</div>`;
+  }
+}
+
+function escapeHtml(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML}
+
+function formatTime(ts){
+  if(!ts)return'';
+  const d=new Date(ts*1000);
+  return d.toLocaleString();
+}
+
+// ── File Content Viewer ──
+async function renderFileContent(){
+  const c=document.getElementById('content');
+  if(!c)return;
+  const params=getHashParams();
+  const path=params.path||'';
+  if(!path){c.innerHTML='<div class="error-msg">No file path specified</div>';return}
+
+  const FILE_KEY = md5('01b394cebf636ef53fe44c46a10abea2f54f60e6');
+
+  c.innerHTML=`
+  <div class="content-toolbar">
+    <span style="flex:1;font-size:0.85rem;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(path)}</span>
+    <button class="btn btn-sm" id="file-save-btn" disabled>Save</button>
+    <button class="btn btn-sm" id="file-back-btn">Back</button>
+  </div>
+  <textarea class="content-area" id="file-content-area" spellcheck="false">Loading...</textarea>
+  <div id="file-save-status" class="text-sm mt-2" style="color:var(--text-dim)"></div>`;
+
+  document.getElementById('file-back-btn').addEventListener('click',()=>navigate('/file/list'));
+  const area=document.getElementById('file-content-area');
+  const saveBtn=document.getElementById('file-save-btn');
+  const statusEl=document.getElementById('file-save-status');
+  let originalContent='';
+
+  try{
+    const j=await api('/file/content?path='+encodeURIComponent(path));
+    if(!j.success||!j.data){area.value='Failed to load file content';return}
+    originalContent=sm4_cbc_decrypt_hex(j.data.content,FILE_KEY,FILE_KEY);
+    area.value=originalContent;
+    area.addEventListener('input',()=>{
+      saveBtn.disabled=(area.value===originalContent);
+    });
+    saveBtn.disabled=false;
+    saveBtn.addEventListener('click',async()=>{
+      const newContent=area.value;
+      if(newContent===originalContent){statusEl.textContent='No changes';return}
+      saveBtn.disabled=true;saveBtn.textContent='Saving...';statusEl.textContent='';
+      try{
+        const encContent=sm4_cbc_encrypt_hex(newContent,FILE_KEY,FILE_KEY);
+        const r=await api('/file/save',{
+          method:'POST',
+          body:JSON.stringify({path:path,content:encContent})
+        });
+        if(r.success){
+          originalContent=newContent;
+          statusEl.style.color='var(--success)';statusEl.textContent='Saved successfully';
+          saveBtn.disabled=true;
+        } else {
+          statusEl.style.color='var(--error)';statusEl.textContent=r.message||'Save failed';
+          saveBtn.disabled=false;
+        }
+      }catch(e){
+        if(e.message!=='Unauthorized'){
+          statusEl.style.color='var(--error)';statusEl.textContent='Error: '+e.message;
+          saveBtn.disabled=false;
+        }
+      }
+      saveBtn.textContent='Save';
+    });
+  }catch(e){
+    if(e.message!=='Unauthorized')area.value='Error: '+e.message;
+  }
+}
+
+// ── Docker Containers ──
+async function renderDocker(){
+  const c=document.getElementById('content');
+  if(!c)return;
+  c.innerHTML='<div style="text-align:center;padding:2rem;color:var(--text-dim)">Loading containers...</div>';
+  try{
+    const j=await api('/docker/containers?all=true');
+    if(!j.success){c.innerHTML='<div class="error-msg">Failed to load containers</div>';return}
+    const containers=j.data||[];
+    if(!Array.isArray(containers)){c.innerHTML='<div class="error-msg">Invalid container data</div>';return}
+    let html='<div class="card"><div class="table-wrap"><table><thead><tr><th>ID</th><th>Name</th><th>Image</th><th>Status</th><th>State</th><th>Ports</th><th>Actions</th></tr></thead><tbody>';
+    containers.forEach(ct=>{
+      const shortId=(ct.id||'').substring(0,12);
+      const state=ct.state||'';
+      const stateClass=state.toLowerCase();
+      const ports=ct.ports||'';
+      const name=(ct.name||'').replace(/^\//,'');
+      html+=`<tr>
+        <td style="font-family:monospace;font-size:0.8rem">${shortId}</td>
+        <td>${escapeHtml(name)}</td>
+        <td style="color:var(--text-muted);max-width:200px;overflow:hidden;text-overflow:ellipsis">${escapeHtml(ct.image||'')}</td>
+        <td><span class="status-badge ${stateClass}">${state}</span></td>
+        <td>${escapeHtml(ct.status||'')}</td>
+        <td style="font-size:0.8rem;color:var(--text-dim)">${escapeHtml(ports)}</td>
+        <td>
+          <button class="btn btn-sm btn-success docker-action" data-id="${ct.id}" data-action="start" ${state==='running'?'disabled':''}>Start</button>
+          <button class="btn btn-sm btn-warning docker-action" data-id="${ct.id}" data-action="stop" ${state!=='running'?'disabled':''}>Stop</button>
+          <button class="btn btn-sm docker-action" data-id="${ct.id}" data-action="restart">Restart</button>
+        </td>
+      </tr>`;
+    });
+    html+='</tbody></table></div></div>';
+    c.innerHTML=html;
+    c.querySelectorAll('.docker-action').forEach(btn=>{
+      btn.addEventListener('click',async function(){
+        const id=this.dataset.id;
+        const action=this.dataset.action;
+        if(!id)return;
+        this.disabled=true;
+        const orig=this.textContent;
+        this.textContent='...';
+        try{
+          const r=await api('/docker/containers/'+encodeURIComponent(id)+'/'+action,{method:'POST'});
+          if(!r.success)alert('Action failed: '+(r.message||'unknown error'));
+          renderDocker();
+        }catch(e){
+          if(e.message!=='Unauthorized')alert('Error: '+e.message);
+          this.disabled=false;this.textContent=orig;
+        }
+      });
+    });
+  }catch(e){
+    if(e.message!=='Unauthorized')c.innerHTML=`<div class="error-msg">Error: ${e.message}</div>`;
+  }
+}
+
+// ── System Info ──
+async function renderSystemInfo(){
+  const c=document.getElementById('content');
+  if(!c)return;
+  c.innerHTML='<div style="text-align:center;padding:2rem;color:var(--text-dim)">Loading system information...</div>';
+  try{
+    const j=await api('/os_info');
+    if(!j.success||!j.data){c.innerHTML='<div class="error-msg">Failed to load system info</div>';return}
+    const d=j.data;
+    const os=d.os||{};
+    const rows=[
+      ['OS Name',os.name||'N/A'],
+      ['Kernel Version',os.kernel_version||'N/A'],
+      ['OS Version',os.os_version||'N/A'],
+      ['Platform',os.long_os_version||os.os_type||'N/A'],
+      ['Hostname',os.host_name||os.hostname||'N/A'],
+      ['Architecture',os.architecture||'N/A'],
+      ['Boot Time',os.boot_time?new Date((os.boot_time)*1000).toLocaleString():'N/A'],
+      ['Updated At',d.updated_at?new Date(d.updated_at*1000).toLocaleString():'N/A']
+    ];
+    c.innerHTML=`<div class="card"><div class="table-wrap"><table class="sys-table"><tbody>
+      ${rows.map(r=>`<tr><td>${r[0]}</td><td>${escapeHtml(r[1])}</td></tr>`).join('')}
+    </tbody></table></div></div>`;
+  }catch(e){
+    if(e.message!=='Unauthorized')c.innerHTML=`<div class="error-msg">Error: ${e.message}</div>`;
+  }
+}
+
+// ── Init ──
+initRouter();
+})();
+</script>
+</body>
+</html>

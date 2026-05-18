@@ -9,7 +9,10 @@
 
 use actix_web::{web, Error, HttpResponse};
 use rust_i18n::t;
-use std::{collections::HashMap, time::{Duration, SystemTime, UNIX_EPOCH}};
+use std::{
+    collections::HashMap,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
 use crate::{
     api::{
@@ -46,35 +49,39 @@ pub async fn sign(
         .as_str()
         .eq(&security_dir.into_inner())
     {
+        let system_time = UNIX_EPOCH + Duration::from_millis(auth_data.timestamp);
+        let now = SystemTime::now();
+        if let Ok(duration) = now.duration_since(system_time) {
+            if duration > Duration::from_secs(60) {
+                return Ok(
+                    HttpResponse::InternalServerError().json(ResponseStructureError {
+                        success: false,
+                        code: 101,
+                        message: String::from("Invalid timestamp.-1"),
+                    }),
+                );
+            }
+        } /*else {
+              return Ok(HttpResponse::InternalServerError().json(ResponseStructureError {
+                  success: false,
+                  code: 101,
+                  message: String::from("Invalid timestamp.-2"),
+              }));
+          }*/
 
-
-    let system_time = UNIX_EPOCH + Duration::from_millis(auth_data.timestamp);
-    let now = SystemTime::now();
-    if let Ok(duration) = now.duration_since(system_time) {
-
-        if duration > Duration::from_secs(60) {
-            return Ok(HttpResponse::InternalServerError().json(ResponseStructureError {
-                success: false,
-                code: 101,
-                message: String::from("Invalid timestamp.-1"),
-            }));
-        } 
-    } /*else {
-        return Ok(HttpResponse::InternalServerError().json(ResponseStructureError {
-            success: false,
-            code: 101,
-            message: String::from("Invalid timestamp.-2"),
-        }));
-    }*/
-        
-
-     
-       let user_data :LoginAuthData = LoginAuthData{
-           username:sm4_decrypt_login(auth_data.username.to_string(), CONF.app.security_dir.to_string(),auth_data.timestamp.to_string()),
-           password:sm4_decrypt_login(auth_data.password.to_string(), CONF.app.security_dir.to_string(),auth_data.timestamp.to_string()),
-           timestamp:0,
-       };
- 
+        let user_data: LoginAuthData = LoginAuthData {
+            username: sm4_decrypt_login(
+                auth_data.username.to_string(),
+                CONF.app.security_dir.to_string(),
+                auth_data.timestamp.to_string(),
+            ),
+            password: sm4_decrypt_login(
+                auth_data.password.to_string(),
+                CONF.app.security_dir.to_string(),
+                auth_data.timestamp.to_string(),
+            ),
+            timestamp: 0,
+        };
 
         let user = web::block(move || query(user_data, pool)).await??;
 
@@ -83,22 +90,26 @@ pub async fn sign(
         let user_json = match serde_json::to_string(&user) {
             Ok(s) => s,
             Err(_) => {
-                return Ok(HttpResponse::InternalServerError().json(ResponseStructureError {
-                    success: false,
-                    code: 500,
-                    message: String::from("serialize user error"),
-                }))
+                return Ok(
+                    HttpResponse::InternalServerError().json(ResponseStructureError {
+                        success: false,
+                        code: 500,
+                        message: String::from("serialize user error"),
+                    }),
+                )
             }
         };
 
         let token_val = match generate_jwt(&user_json) {
             Ok(t) => t,
             Err(_) => {
-                return Ok(HttpResponse::InternalServerError().json(ResponseStructureError {
-                    success: false,
-                    code: 500,
-                    message: String::from("generate token error"),
-                }))
+                return Ok(
+                    HttpResponse::InternalServerError().json(ResponseStructureError {
+                        success: false,
+                        code: 500,
+                        message: String::from("generate token error"),
+                    }),
+                )
             }
         };
 
@@ -172,7 +183,10 @@ fn query(auth_data: LoginAuthData, pool: web::Data<DBPool>) -> Result<AuthUser, 
     let mut conn = match pool.get() {
         Ok(c) => c,
         Err(_) => {
-            return Err(CommonError::InternalServerError(String::from("Failed to get a connection from the pool")).into())
+            return Err(CommonError::InternalServerError(String::from(
+                "Failed to get a connection from the pool",
+            ))
+            .into())
         }
     };
     let mut items = rp_users
@@ -192,11 +206,8 @@ fn query(auth_data: LoginAuthData, pool: web::Data<DBPool>) -> Result<AuthUser, 
                 CommonError::BadRequest(String::from(t!("auth.login.username_band"))).into(),
             );
         }
-        if let Ok(matching) = verify_password_sha1(
-            &user.password,
-            &user.salt,
-            &auth_data.password,
-        ) {
+        if let Ok(matching) = verify_password_sha1(&user.password, &user.salt, &auth_data.password)
+        {
             if matching {
                 let _ = find_user_update_error_count(user.id, 0, &mut conn)?;
                 return Ok(user.into());

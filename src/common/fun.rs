@@ -69,8 +69,8 @@ pub fn process_pid_runing(pid: i32, name: Option<String>) -> bool {
         Some(process) => {
             match name {
                 Some(name) => {
-                    println!("Process name: {}", process.name());
-                    if process.name().to_string().to_lowercase().contains(&name.to_lowercase()) {
+                    println!("Process name: {:?}", process.name());
+                    if process.name().to_string_lossy().to_lowercase().contains(&name.to_lowercase()) {
                         return true;
                     }
                     false
