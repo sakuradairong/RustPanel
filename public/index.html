@@ -152,6 +152,68 @@ td.clickable:hover{text-decoration:underline}
 .cpu-item .bar .fill{height:100%;border-radius:3px;transition:width .4s}
 .cpu-label{display:flex;justify-content:space-between;color:var(--text-dim)}
 
+/* Modal */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:200;display:flex;align-items:center;justify-content:center;padding:1rem}
+.modal{background:var(--card);border:1px solid var(--border);border-radius:12px;width:100%;max-width:480px;max-height:80vh;overflow-y:auto;padding:1.5rem}
+.modal h3{font-size:1.1rem;margin-bottom:1rem;color:var(--text)}
+.modal .field{margin-bottom:.75rem}
+.modal .field label{display:block;font-size:0.85rem;color:var(--text-muted);margin-bottom:3px}
+.modal .btn-row{display:flex;gap:.5rem;justify-content:flex-end;margin-top:1rem}
+.modal .btn-row button{min-width:80px}
+
+/* Log Viewer */
+.log-layout{display:flex;gap:1rem;min-height:500px}
+.log-sidebar{width:220px;flex-shrink:0}
+.log-sidebar .log-file-item{padding:8px 12px;cursor:pointer;border-radius:6px;font-size:0.85rem;color:var(--text-muted);transition:background .12s;margin-bottom:2px}
+.log-sidebar .log-file-item:hover{background:rgba(56,189,248,.08);color:var(--text)}
+.log-sidebar .log-file-item.active{background:rgba(56,189,248,.12);color:var(--primary)}
+.log-content{flex:1;min-width:0}
+.log-text{width:100%;min-height:450px;font-family:'Cascadia Code','Fira Code','JetBrains Mono',monospace;font-size:0.8rem;line-height:1.5;padding:.75rem;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);overflow:auto;white-space:pre-wrap;word-break:break-all;resize:vertical;tab-size:4}
+.log-toolbar{display:flex;gap:.5rem;margin-bottom:.75rem;align-items:center;flex-wrap:wrap}
+
+/* Monitor */
+.monitor-grid{display:grid;grid-template-columns:1fr 1fr;gap:1rem}
+@media(max-width:768px){.monitor-grid{grid-template-columns:1fr}}
+.monitor-card{padding:1rem}
+.monitor-card .label{color:var(--text-dim);font-size:0.8rem;text-transform:uppercase;letter-spacing:.04em}
+.monitor-card .value{font-size:2rem;font-weight:700;margin-top:4px}
+.monitor-card .sub-value{font-size:0.85rem;color:var(--text-muted);margin-top:2px}
+.monitor-card .network-row{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);font-size:0.85rem}
+.monitor-card .network-row:last-child{border-bottom:none}
+
+/* Tabs */
+.tabs{display:flex;border-bottom:1px solid var(--border);margin-bottom:1rem;gap:0}
+.tab{padding:8px 16px;cursor:pointer;color:var(--text-muted);font-size:0.85rem;border-bottom:2px solid transparent;transition:all .12s}
+.tab:hover{color:var(--text)}
+.tab.active{color:var(--primary);border-bottom-color:var(--primary)}
+
+/* Config editor */
+.config-area{width:100%;min-height:350px;font-family:'Cascadia Code','Fira Code','JetBrains Mono',monospace;font-size:0.85rem;line-height:1.5;padding:.75rem;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);resize:vertical;tab-size:4}
+
+/* Search bar */
+.search-bar{display:flex;gap:.5rem;margin-bottom:1rem}
+.search-bar input{flex:1;max-width:300px}
+
+/* Form grid */
+.form-row{display:grid;grid-template-columns:1fr 1fr;gap:.75rem}
+@media(max-width:600px){.form-row{grid-template-columns:1fr}}
+
+/* Toast */
+.toast-container{position:fixed;top:16px;right:16px;z-index:999}
+.toast{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:10px 16px;margin-bottom:8px;font-size:0.85rem;box-shadow:0 4px 12px rgba(0,0,0,.3);animation:toastIn .2s;display:flex;align-items:center;gap:8px;min-width:200px}
+.toast.success{border-left:3px solid var(--success)}
+.toast.error{border-left:3px solid var(--error)}
+.toast.info{border-left:3px solid var(--primary)}
+@keyframes toastIn{from{transform:translateX(100%);opacity:0}to{transform:translateX(0);opacity:1}}
+
+/* Toggle switch */
+.toggle-switch{position:relative;display:inline-block;width:40px;height:22px}
+.toggle-switch input{opacity:0;width:0;height:0}
+.toggle-slider{position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background:var(--bg);border-radius:22px;transition:.2s;border:1px solid var(--border)}
+.toggle-slider:before{position:absolute;content:"";height:16px;width:16px;left:2px;bottom:2px;background:var(--text-muted);border-radius:50%;transition:.2s}
+.toggle-switch input:checked+.toggle-slider{background:rgba(34,197,94,.2);border-color:var(--success)}
+.toggle-switch input:checked+.toggle-slider:before{transform:translateX(18px);background:var(--success)}
+
 /* Mobile */
 @media(max-width:768px){
   #sidebar{transform:translateX(-100%)}
@@ -159,6 +221,11 @@ td.clickable:hover{text-decoration:underline}
   #main{margin-left:0}
   #content{padding:1rem}
   .card-grid-2,.card-grid-3,.card-grid-4{grid-template-columns:1fr}
+  .log-layout{flex-direction:column}
+  .log-sidebar{width:100%}
+  .monitor-grid{grid-template-columns:1fr}
+  .form-row{grid-template-columns:1fr}
+  .card-grid-3{grid-template-columns:1fr}
   #topbar .page-title{font-size:0.95rem}
   #topbar{padding:0 1rem}
 }
@@ -392,10 +459,42 @@ function initRouter(){
   handle();
 }
 
+// ── State cleanup ──
+let monitorEventSource=null;
+let processInterval=null;
+let logRefreshInterval=null;
+let logRefreshEnabled=false;
+let currentLogFile='';
+let currentLogKeyword='';
+let processSearchKeyword='';
+
+function cleanupPage(){
+  if(monitorEventSource){monitorEventSource.close();monitorEventSource=null}
+  if(processInterval){clearInterval(processInterval);processInterval=null}
+  if(logRefreshInterval){clearInterval(logRefreshInterval);logRefreshInterval=null;logRefreshEnabled=false}
+}
+
+// ── Toast ──
+function showToast(message,type){
+  if(!type)type='info';
+  let container=document.querySelector('.toast-container');
+  if(!container){
+    container=document.createElement('div');
+    container.className='toast-container';
+    document.body.appendChild(container);
+  }
+  const toast=document.createElement('div');
+  toast.className='toast '+type;
+  toast.textContent=message;
+  container.appendChild(toast);
+  setTimeout(()=>{toast.style.opacity='0';toast.style.transition='opacity .3s';setTimeout(()=>toast.remove(),300)},3000);
+}
+
 // ── Render ──
 const $app=document.getElementById('app');
 
 function render(route){
+  cleanupPage();
   const token=getToken();
   if(route==='/login')return renderLogin();
   if(!token)return navigate('/login');
@@ -404,6 +503,13 @@ function render(route){
   if(route==='/file/list')return layout(renderFileList,route);
   if(route==='/docker/containers')return layout(renderDocker,route);
   if(route==='/system/info')return layout(renderSystemInfo,route);
+  if(route==='/admin/users')return layout(renderUserManagement,route);
+  if(route==='/process')return layout(renderProcessManagement,route);
+  if(route==='/services')return layout(renderServiceManagement,route);
+  if(route==='/logs')return layout(renderLogViewer,route);
+  if(route==='/monitor')return layout(renderMonitor,route);
+  if(route==='/webserver')return layout(renderWebServer,route);
+  if(route==='/firewall')return layout(renderFirewall,route);
   layout(renderDashboard,route);
 }
 
@@ -448,6 +554,13 @@ function renderSidebar(activeRoute){
       html+=`<div class="nav-item${activeRoute==='/file/list'?' active':''}" data-route="/file/list"><span class="icon">📁</span> Files</div>`;
       html+=`<div class="nav-item${activeRoute==='/docker/containers'?' active':''}" data-route="/docker/containers"><span class="icon">🐳</span> Docker</div>`;
       html+=`<div class="nav-item${activeRoute==='/system/info'?' active':''}" data-route="/system/info"><span class="icon">ℹ</span> System Info</div>`;
+      html+=`<div class="nav-item${activeRoute==='/admin/users'?' active':''}" data-route="/admin/users"><span class="icon">👥</span> Users</div>`;
+      html+=`<div class="nav-item${activeRoute==='/process'?' active':''}" data-route="/process"><span class="icon">⚡</span> Processes</div>`;
+      html+=`<div class="nav-item${activeRoute==='/services'?' active':''}" data-route="/services"><span class="icon">🔧</span> Services</div>`;
+      html+=`<div class="nav-item${activeRoute==='/logs'?' active':''}" data-route="/logs"><span class="icon">📋</span> Logs</div>`;
+      html+=`<div class="nav-item${activeRoute==='/monitor'?' active':''}" data-route="/monitor"><span class="icon">📊</span> Monitor</div>`;
+      html+=`<div class="nav-item${activeRoute==='/webserver'?' active':''}" data-route="/webserver"><span class="icon">🌐</span> Web Server</div>`;
+      html+=`<div class="nav-item${activeRoute==='/firewall'?' active':''}" data-route="/firewall"><span class="icon">🛡</span> Firewall</div>`;
     } else {
       menus.forEach(item=>{
         const r=routeFromMenuPath(item.path);
@@ -508,7 +621,7 @@ function renderTopbar(route){
   const tb=document.getElementById('topbar');
   if(!tb)return;
   const userInfo=JSON.parse(localStorage.getItem('user')||'{}');
-  const pageNames={'/home':'Dashboard','/file/list':'File Manager','/docker/containers':'Docker Containers','/system/info':'System Information'};
+  const pageNames={'/home':'Dashboard','/file/list':'File Manager','/docker/containers':'Docker Containers','/system/info':'System Information','/admin/users':'User Management','/process':'Process Management','/services':'Service Management','/logs':'Log Viewer','/monitor':'Real-Time Monitor','/webserver':'Web Server','/firewall':'Firewall'};
   const baseRoute=route.split('?')[0];
   let title=pageNames[baseRoute]||'RustPanel';
   if(baseRoute.startsWith('/file/view'))title='File Viewer';
@@ -903,6 +1016,1122 @@ async function renderSystemInfo(){
     c.innerHTML=`<div class="card"><div class="table-wrap"><table class="sys-table"><tbody>
       ${rows.map(r=>`<tr><td>${r[0]}</td><td>${escapeHtml(r[1])}</td></tr>`).join('')}
     </tbody></table></div></div>`;
+  }catch(e){
+    if(e.message!=='Unauthorized')c.innerHTML=`<div class="error-msg">Error: ${e.message}</div>`;
+  }
+}
+
+// ── User Management ──
+async function renderUserManagement(){
+  const c=document.getElementById('content');
+  if(!c)return;
+  c.innerHTML='<div style="text-align:center;padding:2rem;color:var(--text-dim)">Loading users...</div>';
+  try{
+    const j=await api('/admin/users');
+    if(!j.success){c.innerHTML='<div class="error-msg">Failed to load users</div>';return}
+    const users=j.data||[];
+    if(!Array.isArray(users)){c.innerHTML='<div class="error-msg">Invalid user data</div>';return}
+    renderUserTable(c,users);
+  }catch(e){
+    if(e.message!=='Unauthorized')c.innerHTML=`<div class="error-msg">Error: ${e.message}</div>`;
+  }
+}
+
+function renderUserTable(c,users){
+  let html=`
+  <div class="flex justify-between items-center mb-4">
+    <h2 style="font-size:1.1rem;font-weight:600">User Management</h2>
+    <button class="btn btn-sm" id="create-user-btn">+ Create User</button>
+  </div>
+  <div class="card"><div class="table-wrap"><table>
+    <thead><tr><th>ID</th><th>Username</th><th>Authority</th><th>Status</th><th>Created At</th><th>Actions</th></tr></thead>
+    <tbody>`;
+  users.forEach(u=>{
+    const status=u.status||'active';
+    const statusClass=status==='active'?'running':status==='banned'?'exited':'';
+    html+=`<tr>
+      <td style="font-family:monospace;font-size:0.8rem">${u.id||''}</td>
+      <td>${escapeHtml(u.username||'')}</td>
+      <td>${escapeHtml(u.authority||'')}</td>
+      <td><span class="status-badge ${statusClass}">${status}</span></td>
+      <td style="color:var(--text-dim);font-size:0.8rem">${u.created_at?formatTime(u.created_at):'N/A'}</td>
+      <td>
+        <button class="btn btn-sm edit-user-btn" data-id="${u.id}">Edit</button>
+        <button class="btn btn-sm btn-danger delete-user-btn" data-id="${u.id}" data-username="${escapeHtml(u.username||'')}">Delete</button>
+        <button class="btn btn-sm btn-warning reset-pwd-btn" data-id="${u.id}">Reset Pwd</button>
+      </td>
+    </tr>`;
+  });
+  html+=`</tbody></table></div></div>`;
+  c.innerHTML=html;
+
+  document.getElementById('create-user-btn').addEventListener('click',()=>showUserModal(null,users,renderUserTable.bind(null,c)));
+  c.querySelectorAll('.edit-user-btn').forEach(btn=>{
+    btn.addEventListener('click',()=>{
+      const id=parseInt(btn.dataset.id);
+      const user=users.find(u=>u.id===id);
+      if(user)showUserModal(user,users,renderUserTable.bind(null,c));
+    });
+  });
+  c.querySelectorAll('.delete-user-btn').forEach(btn=>{
+    btn.addEventListener('click',()=>showDeleteConfirm(btn.dataset.id,btn.dataset.username,renderUserTable.bind(null,c)));
+  });
+  c.querySelectorAll('.reset-pwd-btn').forEach(btn=>{
+    btn.addEventListener('click',()=>resetPassword(btn.dataset.id));
+  });
+}
+
+function showUserModal(user,users,refreshFn){
+  const overlay=document.createElement('div');
+  overlay.className='modal-overlay';
+  const isEdit=!!user;
+  overlay.innerHTML=`
+  <div class="modal">
+    <h3>${isEdit?'Edit User':'Create User'}</h3>
+    <div class="field">
+      <label>Username</label>
+      <input type="text" id="modal-username" value="${isEdit?escapeHtml(user.username||''):''}" ${isEdit?'readonly':''}>
+    </div>
+    <div class="field">
+      <label>${isEdit?'New Password (leave blank to keep)':'Password'}</label>
+      <input type="password" id="modal-password" placeholder="${isEdit?'Leave blank to keep current':''}">
+    </div>
+    <div class="field">
+      <label>Authority</label>
+      <select id="modal-authority">
+        <option value="admin" ${isEdit&&user.authority==='admin'?'selected':''}>admin</option>
+        <option value="user" ${isEdit&&user.authority==='user'?'selected':''}>user</option>
+        <option value="view" ${isEdit&&user.authority==='view'?'selected':''}>view</option>
+      </select>
+    </div>
+    <div id="modal-error" class="error-msg" style="display:none"></div>
+    <div class="btn-row">
+      <button class="btn btn-sm" id="modal-cancel-btn">Cancel</button>
+      <button class="btn btn-sm btn-success" id="modal-save-btn">${isEdit?'Save':'Create'}</button>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+
+  function close(){overlay.remove()}
+  document.getElementById('modal-cancel-btn').addEventListener('click',close);
+  overlay.addEventListener('click',e=>{if(e.target===overlay)close()});
+
+  document.getElementById('modal-save-btn').addEventListener('click',async()=>{
+    const username=document.getElementById('modal-username').value.trim();
+    const password=document.getElementById('modal-password').value;
+    const authority=document.getElementById('modal-authority').value;
+    const errEl=document.getElementById('modal-error');
+    if(!username){errEl.textContent='Username is required';errEl.style.display='block';return}
+    if(!isEdit&&!password){errEl.textContent='Password is required';errEl.style.display='block';return}
+    errEl.style.display='none';
+    const btn=document.getElementById('modal-save-btn');
+    btn.disabled=true;btn.textContent='Saving...';
+    try{
+      const body={username,password,authority};
+      if(isEdit&&!password)delete body.password;
+      const r=await api('/admin/users'+(isEdit?'/'+user.id:''),{
+        method:isEdit?'PUT':'POST',
+        body:JSON.stringify(body)
+      });
+      if(r.success){
+        showToast(isEdit?'User updated':'User created','success');
+        close();
+        if(refreshFn)refreshFn(users);
+      } else {
+        errEl.textContent=r.message||'Operation failed';
+        errEl.style.display='block';
+        btn.disabled=false;btn.textContent=isEdit?'Save':'Create';
+      }
+    }catch(e){
+      if(e.message!=='Unauthorized'){
+        errEl.textContent='Error: '+e.message;
+        errEl.style.display='block';
+        btn.disabled=false;btn.textContent=isEdit?'Save':'Create';
+      }
+    }
+  });
+}
+
+function showDeleteConfirm(id,username,refreshFn){
+  const overlay=document.createElement('div');
+  overlay.className='modal-overlay';
+  overlay.innerHTML=`
+  <div class="modal" style="max-width:380px">
+    <h3>Confirm Delete</h3>
+    <p style="color:var(--text-muted);font-size:0.9rem;margin-bottom:1rem">Are you sure you want to delete user <strong>${escapeHtml(username)}</strong>?</p>
+    <div id="modal-error" class="error-msg" style="display:none"></div>
+    <div class="btn-row">
+      <button class="btn btn-sm" id="modal-cancel-btn">Cancel</button>
+      <button class="btn btn-sm btn-danger" id="modal-confirm-btn">Delete</button>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+
+  function close(){overlay.remove()}
+  document.getElementById('modal-cancel-btn').addEventListener('click',close);
+  overlay.addEventListener('click',e=>{if(e.target===overlay)close()});
+
+  document.getElementById('modal-confirm-btn').addEventListener('click',async()=>{
+    const btn=document.getElementById('modal-confirm-btn');
+    btn.disabled=true;btn.textContent='Deleting...';
+    try{
+      const r=await api('/admin/users/'+id,{method:'DELETE'});
+      if(r.success){
+        showToast('User deleted','success');
+        close();
+        if(refreshFn)refreshFn();
+      } else {
+        document.getElementById('modal-error').textContent=r.message||'Delete failed';
+        document.getElementById('modal-error').style.display='block';
+        btn.disabled=false;btn.textContent='Delete';
+      }
+    }catch(e){
+      if(e.message!=='Unauthorized'){
+        document.getElementById('modal-error').textContent='Error: '+e.message;
+        document.getElementById('modal-error').style.display='block';
+        btn.disabled=false;btn.textContent='Delete';
+      }
+    }
+  });
+}
+
+async function resetPassword(id){
+  const overlay=document.createElement('div');
+  overlay.className='modal-overlay';
+  overlay.innerHTML=`
+  <div class="modal" style="max-width:380px">
+    <h3>Reset Password</h3>
+    <p style="color:var(--text-muted);font-size:0.9rem;margin-bottom:1rem">Generate a new password for this user?</p>
+    <div id="modal-error" class="error-msg" style="display:none"></div>
+    <div class="btn-row">
+      <button class="btn btn-sm" id="modal-cancel-btn">Cancel</button>
+      <button class="btn btn-sm btn-warning" id="modal-reset-btn">Reset</button>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+
+  function close(){overlay.remove()}
+  document.getElementById('modal-cancel-btn').addEventListener('click',close);
+  overlay.addEventListener('click',e=>{if(e.target===overlay)close()});
+
+  document.getElementById('modal-reset-btn').addEventListener('click',async()=>{
+    const btn=document.getElementById('modal-reset-btn');
+    btn.disabled=true;btn.textContent='Resetting...';
+    try{
+      const r=await api('/admin/users/'+id+'/reset-password',{method:'POST'});
+      if(r.success&&r.data){
+        const newPwd=r.data.password||'N/A';
+        overlay.innerHTML=`
+        <div class="modal" style="max-width:380px">
+          <h3>Password Reset</h3>
+          <p style="color:var(--text-muted);font-size:0.9rem;margin-bottom:.5rem">New password for this user:</p>
+          <div style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:10px 14px;font-family:monospace;font-size:0.9rem;text-align:center;color:var(--primary);margin-bottom:1rem;user-select:all">${escapeHtml(newPwd)}</div>
+          <p style="color:var(--text-dim);font-size:0.8rem">Please save this password. It cannot be retrieved later.</p>
+          <div class="btn-row">
+            <button class="btn btn-sm" id="modal-close-btn">Close</button>
+          </div>
+        </div>`;
+        document.getElementById('modal-close-btn').addEventListener('click',close);
+      } else {
+        document.getElementById('modal-error').textContent=r.message||'Reset failed';
+        document.getElementById('modal-error').style.display='block';
+        btn.disabled=false;btn.textContent='Reset';
+      }
+    }catch(e){
+      if(e.message!=='Unauthorized'){
+        document.getElementById('modal-error').textContent='Error: '+e.message;
+        document.getElementById('modal-error').style.display='block';
+        btn.disabled=false;btn.textContent='Reset';
+      }
+    }
+  });
+}
+
+// ── Process Management ──
+async function renderProcessManagement(){
+  const c=document.getElementById('content');
+  if(!c)return;
+  c.innerHTML=`
+  <div class="flex justify-between items-center mb-4">
+    <h2 style="font-size:1.1rem;font-weight:600">Process Management</h2>
+  </div>
+  <div class="search-bar">
+    <input type="text" id="process-search-input" placeholder="Search by name..." value="${processSearchKeyword||''}">
+    <button class="btn btn-sm" id="process-search-btn">Search</button>
+  </div>
+  <div class="card" id="process-list-container">
+    <div style="text-align:center;padding:2rem;color:var(--text-dim)">Loading processes...</div>
+  </div>`;
+
+  document.getElementById('process-search-btn').addEventListener('click',()=>{
+    processSearchKeyword=document.getElementById('process-search-input').value.trim();
+    loadProcessList();
+  });
+  document.getElementById('process-search-input').addEventListener('keydown',e=>{
+    if(e.key==='Enter')document.getElementById('process-search-btn').click();
+  });
+
+  await loadProcessList();
+  processInterval=setInterval(loadProcessList,5000);
+}
+
+async function loadProcessList(){
+  const container=document.getElementById('process-list-container');
+  if(!container)return;
+  try{
+    let url='/process/list';
+    if(processSearchKeyword)url+='?keyword='+encodeURIComponent(processSearchKeyword);
+    const j=await api(url);
+    if(!j.success){container.innerHTML='<div class="error-msg">Failed to load processes</div>';return}
+    const processes=j.data||[];
+    if(!Array.isArray(processes)){container.innerHTML='<div class="error-msg">Invalid process data</div>';return}
+    let html='<div class="table-wrap"><table><thead><tr><th>PID</th><th>Name</th><th>CPU%</th><th>Memory</th><th>Status</th><th>Run Time</th><th>Actions</th></tr></thead><tbody>';
+    processes.forEach(p=>{
+      const memStr=p.memory!=null?p.memory+' MB':'N/A';
+      const cpuStr=p.cpu!=null?p.cpu+'%':'N/A';
+      html+=`<tr>
+        <td style="font-family:monospace">${p.pid||''}</td>
+        <td>${escapeHtml(p.name||'')}</td>
+        <td>${cpuStr}</td>
+        <td>${memStr}</td>
+        <td>${escapeHtml(p.status||'')}</td>
+        <td style="color:var(--text-dim);font-size:0.8rem">${escapeHtml(p.run_time||p.runtime||'')}</td>
+        <td><button class="btn btn-sm btn-danger kill-process-btn" data-pid="${p.pid}" data-name="${escapeHtml(p.name||'')}">Kill</button></td>
+      </tr>`;
+    });
+    html+='</tbody></table></div>';
+    container.innerHTML=html;
+    container.querySelectorAll('.kill-process-btn').forEach(btn=>{
+      btn.addEventListener('click',function(){
+        const pid=this.dataset.pid;
+        const name=this.dataset.name;
+        killProcess(pid,name);
+      });
+    });
+  }catch(e){
+    if(e.message!=='Unauthorized')container.innerHTML=`<div class="error-msg">Error: ${e.message}</div>`;
+  }
+}
+
+function killProcess(pid,name){
+  const overlay=document.createElement('div');
+  overlay.className='modal-overlay';
+  overlay.innerHTML=`
+  <div class="modal" style="max-width:380px">
+    <h3>Kill Process</h3>
+    <p style="color:var(--text-muted);font-size:0.9rem;margin-bottom:1rem">Kill process PID ${pid} (<strong>${escapeHtml(name)}</strong>)?</p>
+    <div class="btn-row">
+      <button class="btn btn-sm" id="modal-cancel-btn">Cancel</button>
+      <button class="btn btn-sm btn-danger" id="modal-kill-btn">Kill</button>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+
+  function close(){overlay.remove()}
+  document.getElementById('modal-cancel-btn').addEventListener('click',close);
+  overlay.addEventListener('click',e=>{if(e.target===overlay)close()});
+
+  document.getElementById('modal-kill-btn').addEventListener('click',async()=>{
+    const btn=document.getElementById('modal-kill-btn');
+    btn.disabled=true;btn.textContent='Killing...';
+    try{
+      const r=await api('/process/kill',{
+        method:'POST',
+        body:JSON.stringify({pid:parseInt(pid)})
+      });
+      if(r.success){
+        showToast('Process killed','success');
+        close();
+        loadProcessList();
+      } else {
+        showToast(r.message||'Kill failed','error');
+        close();
+      }
+    }catch(e){
+      if(e.message!=='Unauthorized'){
+        showToast('Error: '+e.message,'error');
+        close();
+      }
+    }
+  });
+}
+
+// ── Service Management ──
+async function renderServiceManagement(){
+  const c=document.getElementById('content');
+  if(!c)return;
+  c.innerHTML='<div style="text-align:center;padding:2rem;color:var(--text-dim)">Loading services...</div>';
+  try{
+    const j=await api('/service/list');
+    if(!j.success){c.innerHTML='<div class="error-msg">Failed to load services</div>';return}
+    const services=j.data||[];
+    if(!Array.isArray(services)){c.innerHTML='<div class="error-msg">Invalid service data</div>';return}
+    let html=`
+    <div class="flex justify-between items-center mb-4">
+      <h2 style="font-size:1.1rem;font-weight:600">Service Management</h2>
+    </div>
+    <div class="card"><div class="table-wrap"><table>
+      <thead><tr><th>Name</th><th>Load</th><th>Active</th><th>Sub</th><th>Description</th><th>Actions</th></tr></thead>
+      <tbody>`;
+    services.forEach(s=>{
+      const active=s.active||'';
+      const activeClass=active==='active'?'running':active==='inactive'?'exited':'';
+      html+=`<tr class="service-row" data-name="${escapeHtml(s.name||'')}" style="cursor:pointer">
+        <td>${escapeHtml(s.name||'')}</td>
+        <td>${escapeHtml(s.load||'')}</td>
+        <td><span class="status-badge ${activeClass}">${active}</span></td>
+        <td>${escapeHtml(s.sub||'')}</td>
+        <td style="color:var(--text-muted);max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(s.description||'')}</td>
+        <td>
+          <button class="btn btn-sm btn-success service-action" data-name="${escapeHtml(s.name||'')}" data-action="start">Start</button>
+          <button class="btn btn-sm btn-warning service-action" data-name="${escapeHtml(s.name||'')}" data-action="stop">Stop</button>
+          <button class="btn btn-sm service-action" data-name="${escapeHtml(s.name||'')}" data-action="restart">Restart</button>
+        </td>
+      </tr>`;
+    });
+    html+=`</tbody></table></div></div>`;
+    c.innerHTML=html;
+
+    c.querySelectorAll('.service-action').forEach(btn=>{
+      btn.addEventListener('click',async function(e){
+        e.stopPropagation();
+        const name=this.dataset.name;
+        const action=this.dataset.action;
+        this.disabled=true;
+        const orig=this.textContent;
+        this.textContent='...';
+        try{
+          const r=await api('/service/'+action,{
+            method:'POST',
+            body:JSON.stringify({name})
+          });
+          if(r.success){
+            showToast('Service '+action+' successful','success');
+            renderServiceManagement();
+          } else {
+            showToast(r.message||action+' failed','error');
+            this.disabled=false;this.textContent=orig;
+          }
+        }catch(e){
+          if(e.message!=='Unauthorized'){
+            showToast('Error: '+e.message,'error');
+            this.disabled=false;this.textContent=orig;
+          }
+        }
+      });
+    });
+
+    c.querySelectorAll('.service-row').forEach(row=>{
+      row.addEventListener('click',function(){
+        const name=this.dataset.name;
+        showServiceStatus(name);
+      });
+    });
+  }catch(e){
+    if(e.message!=='Unauthorized')c.innerHTML=`<div class="error-msg">Error: ${e.message}</div>`;
+  }
+}
+
+async function showServiceStatus(name){
+  const overlay=document.createElement('div');
+  overlay.className='modal-overlay';
+  overlay.innerHTML=`
+  <div class="modal" style="max-width:600px">
+    <h3>Service Status: ${escapeHtml(name)}</h3>
+    <pre style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:12px;font-size:0.8rem;font-family:monospace;color:var(--text);max-height:300px;overflow:auto;white-space:pre-wrap;word-break:break-all" id="service-status-output">Loading...</pre>
+    <div class="btn-row">
+      <button class="btn btn-sm" id="modal-close-btn">Close</button>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+
+  function close(){overlay.remove()}
+  document.getElementById('modal-close-btn').addEventListener('click',close);
+  overlay.addEventListener('click',e=>{if(e.target===overlay)close()});
+
+  try{
+    const r=await api('/service/status',{
+      method:'POST',
+      body:JSON.stringify({name})
+    });
+    const outputEl=document.getElementById('service-status-output');
+    if(r.success&&r.data){
+      outputEl.textContent=typeof r.data==='string'?r.data:JSON.stringify(r.data,null,2);
+    } else {
+      outputEl.textContent=r.message||'Failed to get status';
+    }
+  }catch(e){
+    if(e.message!=='Unauthorized'){
+      document.getElementById('service-status-output').textContent='Error: '+e.message;
+    }
+  }
+}
+
+// ── Log Viewer ──
+async function renderLogViewer(){
+  const c=document.getElementById('content');
+  if(!c)return;
+  currentLogKeyword='';
+  currentLogFile='';
+  c.innerHTML=`
+  <div class="flex justify-between items-center mb-4">
+    <h2 style="font-size:1.1rem;font-weight:600">Log Viewer</h2>
+    <div class="flex items-center gap-3">
+      <label class="toggle-switch">
+        <input type="checkbox" id="log-auto-refresh">
+        <span class="toggle-slider"></span>
+      </label>
+      <span class="text-sm text-muted">Auto-refresh</span>
+    </div>
+  </div>
+  <div class="log-layout">
+    <div class="log-sidebar card">
+      <div style="font-size:0.85rem;color:var(--text-dim);margin-bottom:.5rem;padding:0 4px">Log Files</div>
+      <div id="log-file-list" style="max-height:450px;overflow-y:auto">
+        <div style="text-align:center;padding:1rem;color:var(--text-dim);font-size:0.85rem">Loading...</div>
+      </div>
+    </div>
+    <div class="log-content">
+      <div class="log-toolbar">
+        <input type="text" id="log-keyword-input" placeholder="Search in log..." style="max-width:250px">
+        <button class="btn btn-sm" id="log-search-btn">Search</button>
+        <button class="btn btn-sm" id="log-clear-btn">Clear</button>
+        <span id="log-file-name" style="flex:1;font-size:0.85rem;color:var(--text-muted);text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
+      </div>
+      <pre class="log-text" id="log-content-area">Select a log file</pre>
+    </div>
+  </div>`;
+
+  document.getElementById('log-search-btn').addEventListener('click',()=>{
+    currentLogKeyword=document.getElementById('log-keyword-input').value.trim();
+    if(currentLogFile)loadLogContent(currentLogFile);
+  });
+  document.getElementById('log-keyword-input').addEventListener('keydown',e=>{
+    if(e.key==='Enter')document.getElementById('log-search-btn').click();
+  });
+  document.getElementById('log-clear-btn').addEventListener('click',()=>{
+    document.getElementById('log-keyword-input').value='';
+    currentLogKeyword='';
+    if(currentLogFile)loadLogContent(currentLogFile);
+  });
+  document.getElementById('log-auto-refresh').addEventListener('change',function(){
+    logRefreshEnabled=this.checked;
+    if(logRefreshEnabled&&currentLogFile){
+      if(logRefreshInterval)clearInterval(logRefreshInterval);
+      logRefreshInterval=setInterval(()=>loadLogContent(currentLogFile),5000);
+    } else {
+      if(logRefreshInterval)clearInterval(logRefreshInterval);
+      logRefreshInterval=null;
+    }
+  });
+
+  await loadLogFileList();
+}
+
+async function loadLogFileList(){
+  const listEl=document.getElementById('log-file-list');
+  if(!listEl)return;
+  try{
+    const j=await api('/log/list');
+    if(!j.success){listEl.innerHTML='<div style="color:var(--error);padding:1rem;font-size:0.85rem">Failed to load</div>';return}
+    const files=j.data||[];
+    if(!Array.isArray(files)){listEl.innerHTML='<div style="color:var(--text-dim);padding:1rem;font-size:0.85rem">No log files</div>';return}
+    let html='';
+    files.forEach(f=>{
+      const fileName=typeof f==='string'?f:(f.path||f.name||'');
+      const displayName=fileName.split('/').pop()||fileName;
+      html+=`<div class="log-file-item${currentLogFile===fileName?' active':''}" data-path="${escapeHtml(fileName)}">${escapeHtml(displayName)}</div>`;
+    });
+    listEl.innerHTML=html||'<div style="color:var(--text-dim);padding:1rem;font-size:0.85rem;text-align:center">No log files</div>';
+    listEl.querySelectorAll('.log-file-item').forEach(el=>{
+      el.addEventListener('click',function(){
+        currentLogFile=this.dataset.path;
+        document.getElementById('log-file-list').querySelectorAll('.log-file-item').forEach(i=>i.classList.remove('active'));
+        this.classList.add('active');
+        document.getElementById('log-file-name').textContent=currentLogFile;
+        loadLogContent(currentLogFile);
+      });
+    });
+  }catch(e){
+    if(e.message!=='Unauthorized')listEl.innerHTML='<div style="color:var(--error);padding:1rem;font-size:0.85rem">Error: '+e.message+'</div>';
+  }
+}
+
+async function loadLogContent(filePath){
+  const area=document.getElementById('log-content-area');
+  if(!area)return;
+  area.textContent='Loading...';
+  try{
+    let url='/log/read?path='+encodeURIComponent(filePath)+'&lines=200';
+    if(currentLogKeyword)url+='&keyword='+encodeURIComponent(currentLogKeyword);
+    const j=await api(url);
+    if(!j.success){area.textContent=j.message||'Failed to load log';return}
+    const content=j.data||'';
+    if(currentLogKeyword&&typeof content==='string'){
+      const regex=new RegExp(currentLogKeyword.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'gi');
+      area.innerHTML=content.split('\n').map(line=>{
+        const highlighted=line.replace(regex,m=>`<span style="background:rgba(245,158,11,.3);color:var(--warning);border-radius:2px;padding:0 2px">${m}</span>`);
+        return highlighted;
+      }).join('\n');
+    } else {
+      area.textContent=typeof content==='string'?content:JSON.stringify(content,null,2);
+    }
+  }catch(e){
+    if(e.message!=='Unauthorized')area.textContent='Error: '+e.message;
+  }
+}
+
+// ── Real-Time Monitor ──
+function renderMonitor(){
+  const c=document.getElementById('content');
+  if(!c)return;
+
+  c.innerHTML=`
+  <div class="flex justify-between items-center mb-4">
+    <h2 style="font-size:1.1rem;font-weight:600">Real-Time Monitor</h2>
+    <span id="monitor-status" class="text-sm" style="color:var(--success)">● Connected</span>
+  </div>
+  <div class="monitor-grid">
+    <div class="card monitor-card">
+      <div class="label">CPU Usage</div>
+      <div class="value" id="monitor-cpu" style="color:var(--success)">0%</div>
+      <div class="progress-bar mt-2"><div class="fill green" id="monitor-cpu-bar" style="width:0%"></div></div>
+    </div>
+    <div class="card monitor-card">
+      <div class="label">Memory</div>
+      <div class="value" id="monitor-memory" style="color:var(--primary)">0 / 0</div>
+      <div class="progress-bar mt-2"><div class="fill blue" id="monitor-memory-bar" style="width:0%"></div></div>
+    </div>
+    <div class="card monitor-card">
+      <div class="label">Swap</div>
+      <div class="value" id="monitor-swap" style="color:var(--secondary)">0 / 0</div>
+      <div class="progress-bar mt-2"><div class="fill blue" id="monitor-swap-bar" style="width:0%"></div></div>
+    </div>
+    <div class="card monitor-card">
+      <div class="label">Uptime</div>
+      <div class="value" id="monitor-uptime" style="color:var(--text);font-size:1.25rem">0</div>
+    </div>
+  </div>
+  <div class="card mt-4">
+    <h3 style="font-size:0.95rem;margin-bottom:.75rem;color:var(--text-muted)">Network</h3>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem">
+      <div>
+        <div class="text-sm text-muted mb-2">Received</div>
+        <div class="value" id="monitor-net-rx" style="font-size:1.5rem;font-weight:700;color:var(--primary)">0 B/s</div>
+      </div>
+      <div>
+        <div class="text-sm text-muted mb-2">Transmitted</div>
+        <div class="value" id="monitor-net-tx" style="font-size:1.5rem;font-weight:700;color:var(--secondary)">0 B/s</div>
+      </div>
+    </div>
+  </div>`;
+
+  try{
+    const token=getToken();
+    const url=apiUrl('/monitor')+'?token='+encodeURIComponent(token||'');
+    monitorEventSource=new EventSource(url);
+
+    monitorEventSource.onmessage=function(e){
+      try{
+        const data=JSON.parse(e.data);
+        updateMonitor(data);
+      }catch(parseErr){}
+    };
+
+    monitorEventSource.onerror=function(){
+      const statusEl=document.getElementById('monitor-status');
+      if(statusEl){statusEl.textContent='✗ Disconnected';statusEl.style.color='var(--error)'}
+    };
+  }catch(e){
+    const statusEl=document.getElementById('monitor-status');
+    if(statusEl){statusEl.textContent='✗ Connection failed';statusEl.style.color='var(--error)'}
+  }
+}
+
+function updateMonitor(data){
+  const cpu=data.cpu!=null?parseFloat(data.cpu):null;
+  const memUsed=data.memory_used!=null?parseFloat(data.memory_used):null;
+  const memTotal=data.memory_total!=null?parseFloat(data.memory_total):null;
+  const swapUsed=data.swap_used!=null?parseFloat(data.swap_used):null;
+  const swapTotal=data.swap_total!=null?parseFloat(data.swap_total):null;
+  const netRx=data.network_rx!=null?parseFloat(data.network_rx):null;
+  const netTx=data.network_tx!=null?parseFloat(data.network_tx):null;
+  const uptime=data.uptime!=null?data.uptime:null;
+
+  if(cpu!==null){
+    const cpuEl=document.getElementById('monitor-cpu');
+    const cpuBar=document.getElementById('monitor-cpu-bar');
+    if(cpuEl){cpuEl.textContent=cpu.toFixed(1)+'%';cpuEl.style.color=cpu>80?'var(--error)':cpu>50?'var(--warning)':'var(--success)'}
+    if(cpuBar){cpuBar.style.width=Math.min(cpu,100)+'%';cpuBar.className='fill '+(cpu>80?'red':cpu>50?'orange':'green')}
+  }
+
+  if(memUsed!==null&&memTotal!==null&&memTotal>0){
+    const pct=(memUsed/memTotal)*100;
+    const memEl=document.getElementById('monitor-memory');
+    const memBar=document.getElementById('monitor-memory-bar');
+    if(memEl)memEl.textContent=formatSize(memUsed*1048576)+' / '+formatSize(memTotal*1048576);
+    if(memBar){memBar.style.width=Math.min(pct,100)+'%';memBar.className='fill '+(pct>80?'red':pct>50?'orange':'blue')}
+  }
+
+  if(swapUsed!==null&&swapTotal!==null&&swapTotal>0){
+    const pct=(swapUsed/swapTotal)*100;
+    const swapEl=document.getElementById('monitor-swap');
+    const swapBar=document.getElementById('monitor-swap-bar');
+    if(swapEl)swapEl.textContent=formatSize(swapUsed*1048576)+' / '+formatSize(swapTotal*1048576);
+    if(swapBar){swapBar.style.width=Math.min(pct,100)+'%';swapBar.className='fill '+(pct>80?'red':pct>50?'orange':'blue')}
+  } else if(swapUsed!==null&&swapTotal!==null){
+    const swapEl=document.getElementById('monitor-swap');
+    if(swapEl)swapEl.textContent=formatSize(swapUsed*1048576)+' / '+formatSize(swapTotal*1048576);
+  }
+
+  if(netRx!==null){
+    const rxEl=document.getElementById('monitor-net-rx');
+    if(rxEl)rxEl.textContent=formatSize(netRx)+'/s';
+  }
+  if(netTx!==null){
+    const txEl=document.getElementById('monitor-net-tx');
+    if(txEl)txEl.textContent=formatSize(netTx)+'/s';
+  }
+
+  if(uptime!==null){
+    const upEl=document.getElementById('monitor-uptime');
+    if(upEl){
+      const days=Math.floor(uptime/86400);
+      const hours=Math.floor((uptime%86400)/3600);
+      const mins=Math.floor((uptime%3600)/60);
+      upEl.textContent=days+'d '+hours+'h '+mins+'m';
+    }
+  }
+}
+
+// ── Web Server ──
+let webServerTab='status';
+
+async function renderWebServer(){
+  const c=document.getElementById('content');
+  if(!c)return;
+  webServerTab='status';
+  c.innerHTML=`
+  <div class="flex justify-between items-center mb-4">
+    <h2 style="font-size:1.1rem;font-weight:600">Web Server</h2>
+  </div>
+  <div class="card mb-4" id="webserver-status-card">
+    <div style="text-align:center;padding:1rem;color:var(--text-dim)">Loading status...</div>
+  </div>
+  <div class="tabs">
+    <div class="tab active" data-tab="status">Sites List</div>
+    <div class="tab" data-tab="create">Create Site</div>
+    <div class="tab" data-tab="config">Config</div>
+  </div>
+  <div id="webserver-tab-content">
+    <div style="text-align:center;padding:2rem;color:var(--text-dim)">Select a tab</div>
+  </div>`;
+
+  c.querySelectorAll('.tab').forEach(tab=>{
+    tab.addEventListener('click',function(){
+      webServerTab=this.dataset.tab;
+      c.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+      this.classList.add('active');
+      renderWebServerTab(webServerTab);
+    });
+  });
+
+  await loadWebServerStatus();
+  renderWebServerTab(webServerTab);
+}
+
+async function loadWebServerStatus(){
+  const card=document.getElementById('webserver-status-card');
+  if(!card)return;
+  try{
+    const j=await api('/webserver/status');
+    if(!j.success){card.innerHTML='<div class="error-msg">Failed to load status</div>';return}
+    const d=j.data||{};
+    const installed=d.installed?'Yes':'No';
+    const running=d.running?'Yes':'No';
+    const configTest=d.config_test||d.config_test_result||'N/A';
+    card.innerHTML=`
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:1rem">
+      <div><div class="text-sm text-dim">Installed</div><div style="font-size:1.25rem;font-weight:600;color:${d.installed?'var(--success)':'var(--error)'}">${installed}</div></div>
+      <div><div class="text-sm text-dim">Running</div><div style="font-size:1.25rem;font-weight:600;color:${d.running?'var(--success)':'var(--error)'}">${running}</div></div>
+      <div><div class="text-sm text-dim">Config Test</div><div style="font-size:1rem;font-weight:600;color:${(configTest+'').toLowerCase()==='successful'||(configTest+'').toLowerCase()==='ok'?'var(--success)':'var(--warning)'}">${escapeHtml(configTest)}</div></div>
+    </div>`;
+  }catch(e){
+    if(e.message!=='Unauthorized')card.innerHTML='<div class="error-msg">Error: '+e.message+'</div>';
+  }
+}
+
+async function renderWebServerTab(tab){
+  const tc=document.getElementById('webserver-tab-content');
+  if(!tc)return;
+  if(tab==='status')await renderWebServerSites(tc);
+  else if(tab==='create')renderWebServerCreate(tc);
+  else if(tab==='config')renderWebServerConfig(tc);
+}
+
+async function renderWebServerSites(tc){
+  tc.innerHTML='<div style="text-align:center;padding:2rem;color:var(--text-dim)">Loading sites...</div>';
+  try{
+    const j=await api('/webserver/sites');
+    if(!j.success){tc.innerHTML='<div class="error-msg">Failed to load sites</div>';return}
+    const sites=j.data||[];
+    if(!Array.isArray(sites)){tc.innerHTML='<div class="error-msg">Invalid site data</div>';return}
+    let html='<div class="card"><div class="table-wrap"><table><thead><tr><th>Server Name</th><th>Root</th><th>Enabled</th><th>Actions</th></tr></thead><tbody>';
+    sites.forEach(s=>{
+      const name=s.server_name||s.name||'';
+      const root=s.root||s.document_root||'';
+      const enabled=s.enabled!=null?s.enabled:true;
+      html+=`<tr>
+        <td>${escapeHtml(name)}</td>
+        <td style="color:var(--text-muted);font-size:0.8rem">${escapeHtml(root)}</td>
+        <td><span class="status-badge ${enabled?'running':'exited'}">${enabled?'Enabled':'Disabled'}</span></td>
+        <td><button class="btn btn-sm btn-danger site-delete-btn" data-name="${escapeHtml(name)}">Delete</button></td>
+      </tr>`;
+    });
+    html+='</tbody></table></div></div>';
+    tc.innerHTML=html;
+    tc.querySelectorAll('.site-delete-btn').forEach(btn=>{
+      btn.addEventListener('click',async function(){
+        const name=this.dataset.name;
+        const overlay=document.createElement('div');
+        overlay.className='modal-overlay';
+        overlay.innerHTML=`
+        <div class="modal" style="max-width:380px">
+          <h3>Confirm Delete</h3>
+          <p style="color:var(--text-muted);font-size:0.9rem;margin-bottom:1rem">Delete site <strong>${escapeHtml(name)}</strong>?</p>
+          <div class="btn-row">
+            <button class="btn btn-sm" id="modal-cancel-btn">Cancel</button>
+            <button class="btn btn-sm btn-danger" id="modal-confirm-btn">Delete</button>
+          </div>
+        </div>`;
+        document.body.appendChild(overlay);
+        function closeOverlay(){overlay.remove()}
+        document.getElementById('modal-cancel-btn').addEventListener('click',closeOverlay);
+        overlay.addEventListener('click',e=>{if(e.target===overlay)closeOverlay()});
+        document.getElementById('modal-confirm-btn').addEventListener('click',async()=>{
+          const confirmBtn=document.getElementById('modal-confirm-btn');
+          confirmBtn.disabled=true;confirmBtn.textContent='Deleting...';
+          try{
+            const r=await api('/webserver/sites/'+encodeURIComponent(name),{method:'DELETE'});
+            if(r.success){showToast('Site deleted','success');closeOverlay();renderWebServerSites(tc)}
+            else showToast(r.message||'Delete failed','error');
+          }catch(e){if(e.message!=='Unauthorized')showToast('Error: '+e.message,'error')}
+          confirmBtn.disabled=false;confirmBtn.textContent='Delete';
+        });
+      });
+    });
+  }catch(e){
+    if(e.message!=='Unauthorized')tc.innerHTML='<div class="error-msg">Error: '+e.message+'</div>';
+  }
+}
+
+function renderWebServerCreate(tc){
+  tc.innerHTML=`
+  <div class="card">
+    <div class="form-row">
+      <div class="field">
+        <label>Server Name</label>
+        <input type="text" id="ws-server-name" placeholder="example.com">
+      </div>
+      <div class="field">
+        <label>Root Directory</label>
+        <input type="text" id="ws-root" placeholder="/var/www/example">
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="field">
+        <label>Proxy Pass (optional)</label>
+        <input type="text" id="ws-proxy-pass" placeholder="http://127.0.0.1:3000">
+      </div>
+      <div class="field">
+        <label>SSL</label>
+        <select id="ws-ssl">
+          <option value="">None</option>
+          <option value="letsencrypt">Let's Encrypt</option>
+          <option value="custom">Custom</option>
+        </select>
+      </div>
+    </div>
+    <div class="field">
+      <label>Index Files</label>
+      <input type="text" id="ws-index" placeholder="index.html index.htm" value="index.html index.htm">
+    </div>
+    <div class="field">
+      <label>Custom Config (optional)</label>
+      <textarea id="ws-custom-config" rows="6" class="config-area" placeholder="# Additional nginx directives"></textarea>
+    </div>
+    <div id="ws-create-error" class="error-msg" style="display:none"></div>
+    <button class="btn btn-success mt-3" id="ws-create-btn">Create Site</button>
+  </div>`;
+
+  document.getElementById('ws-create-btn').addEventListener('click',async()=>{
+    const name=document.getElementById('ws-server-name').value.trim();
+    const root=document.getElementById('ws-root').value.trim();
+    const proxyPass=document.getElementById('ws-proxy-pass').value.trim();
+    const ssl=document.getElementById('ws-ssl').value;
+    const index=document.getElementById('ws-index').value.trim();
+    const customConfig=document.getElementById('ws-custom-config').value.trim();
+    const errEl=document.getElementById('ws-create-error');
+
+    if(!name){errEl.textContent='Server name is required';errEl.style.display='block';return}
+    if(!root&&!proxyPass){errEl.textContent='Root directory or proxy pass is required';errEl.style.display='block';return}
+    errEl.style.display='none';
+
+    const btn=document.getElementById('ws-create-btn');
+    btn.disabled=true;btn.textContent='Creating...';
+    try{
+      const body={server_name:name,root,proxy_pass:proxyPass,ssl,index,extra_config:customConfig};
+      const r=await api('/webserver/sites',{method:'POST',body:JSON.stringify(body)});
+      if(r.success){
+        showToast('Site created','success');
+        webServerTab='status';
+        renderWebServer();
+      } else {
+        errEl.textContent=r.message||'Create failed';
+        errEl.style.display='block';
+        btn.disabled=false;btn.textContent='Create Site';
+      }
+    }catch(e){
+      if(e.message!=='Unauthorized'){
+        errEl.textContent='Error: '+e.message;
+        errEl.style.display='block';
+        btn.disabled=false;btn.textContent='Create Site';
+      }
+    }
+  });
+}
+
+function renderWebServerConfig(tc){
+  tc.innerHTML=`
+  <div class="card">
+    <p style="color:var(--text-muted);margin-bottom:1rem;font-size:0.9rem">Manage Nginx configuration</p>
+    <button class="btn btn-warning" id="ws-reload-btn">Reload Nginx</button>
+    <div id="ws-reload-result" class="mt-3" style="display:none"></div>
+  </div>`;
+
+  document.getElementById('ws-reload-btn').addEventListener('click',async()=>{
+    const btn=document.getElementById('ws-reload-btn');
+    btn.disabled=true;btn.textContent='Reloading...';
+    const resultEl=document.getElementById('ws-reload-result');
+    resultEl.style.display='none';
+    try{
+      const r=await api('/webserver/reload',{method:'POST'});
+      resultEl.style.display='block';
+      if(r.success){
+        resultEl.innerHTML='<span style="color:var(--success)">✓ Nginx reloaded successfully</span>';
+        loadWebServerStatus();
+      } else {
+        resultEl.innerHTML='<span style="color:var(--error)">✗ '+(r.message||'Reload failed')+'</span>';
+      }
+    }catch(e){
+      if(e.message!=='Unauthorized'){
+        resultEl.style.display='block';
+        resultEl.innerHTML='<span style="color:var(--error)">✗ Error: '+e.message+'</span>';
+      }
+    }finally{
+      btn.disabled=false;btn.textContent='Reload Nginx';
+    }
+  });
+}
+
+// ── Firewall ──
+async function renderFirewall(){
+  const c=document.getElementById('content');
+  if(!c)return;
+  c.innerHTML='<div style="text-align:center;padding:2rem;color:var(--text-dim)">Loading firewall...</div>';
+  try{
+    const [statusJ, rulesJ] = await Promise.all([
+      api('/firewall/status'),
+      api('/firewall/rules')
+    ]);
+    const statusData = statusJ.data||{};
+    const rules = rulesJ.data||[];
+    if(!Array.isArray(rules)){c.innerHTML='<div class="error-msg">Invalid firewall data</div>';return}
+
+    const active=statusData.active!=null?statusData.active:statusData.enabled;
+
+    let html=`
+    <div class="flex justify-between items-center mb-4">
+      <h2 style="font-size:1.1rem;font-weight:600">Firewall</h2>
+      <div class="flex items-center gap-3">
+        <span class="text-sm text-muted">Status:</span>
+        <span class="status-badge ${active?'running':'exited'}">${active?'Active':'Inactive'}</span>
+      </div>
+    </div>`;
+
+    html+=`<div class="card mb-4">
+      <h3 style="font-size:0.95rem;margin-bottom:.75rem;color:var(--text-muted)">Rules</h3>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Chain</th><th>#</th><th>Target</th><th>Prot</th><th>Source</th><th>Destination</th></tr></thead>
+        <tbody>`;
+    if(rules.length===0){
+      html+=`<tr><td colspan="6" class="text-center text-muted">No rules</td></tr>`;
+    } else {
+      rules.forEach(rule=>{
+        const chain=rule.chain||rule.chaine||'';
+        const num=rule.num||rule.number||rule.rule_num||'';
+        const target=rule.target||'';
+        const prot=rule.prot||rule.protocol||'';
+        const source=rule.source||rule.src||'';
+        const dest=rule.destination||rule.dst||'';
+        html+=`<tr>
+          <td>${escapeHtml(chain)}</td>
+          <td>${num}</td>
+          <td>${escapeHtml(target)}</td>
+          <td>${escapeHtml(prot)}</td>
+          <td style="font-family:monospace;font-size:0.8rem">${escapeHtml(source)}</td>
+          <td style="font-family:monospace;font-size:0.8rem">${escapeHtml(dest)}</td>
+        </tr>`;
+      });
+    }
+    html+=`</tbody></table></div></div>`;
+
+    html+=`
+    <div class="card-grid card-grid-3">
+      <div class="card">
+        <h3 style="font-size:0.95rem;margin-bottom:.75rem;color:var(--text-muted)">Add Rule</h3>
+        <div class="field">
+          <label>Chain</label>
+          <select id="fw-add-chain">
+            <option value="INPUT">INPUT</option>
+            <option value="OUTPUT">OUTPUT</option>
+            <option value="FORWARD">FORWARD</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Rule</label>
+          <input type="text" id="fw-add-rule" placeholder="-s 192.168.1.0/24 -j ACCEPT">
+        </div>
+        <button class="btn btn-sm btn-success" id="fw-add-rule-btn">Add Rule</button>
+        <div id="fw-add-error" class="error-msg" style="display:none"></div>
+      </div>
+      <div class="card">
+        <h3 style="font-size:0.95rem;margin-bottom:.75rem;color:var(--text-muted)">Delete Rule</h3>
+        <div class="field">
+          <label>Chain</label>
+          <select id="fw-del-chain">
+            <option value="INPUT">INPUT</option>
+            <option value="OUTPUT">OUTPUT</option>
+            <option value="FORWARD">FORWARD</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Rule Number</label>
+          <input type="number" id="fw-del-num" min="1" placeholder="1">
+        </div>
+        <button class="btn btn-sm btn-danger" id="fw-del-rule-btn">Delete Rule</button>
+        <div id="fw-del-error" class="error-msg" style="display:none"></div>
+      </div>
+      <div class="card">
+        <h3 style="font-size:0.95rem;margin-bottom:.75rem;color:var(--text-muted)">Open Port</h3>
+        <div class="field">
+          <label>Port</label>
+          <input type="number" id="fw-port-num" min="1" max="65535" placeholder="80">
+        </div>
+        <div class="field">
+          <label>Protocol</label>
+          <select id="fw-port-prot">
+            <option value="tcp">TCP</option>
+            <option value="udp">UDP</option>
+            <option value="both">Both</option>
+          </select>
+        </div>
+        <button class="btn btn-sm btn-success" id="fw-open-port-btn">Open Port</button>
+        <div id="fw-port-error" class="error-msg" style="display:none"></div>
+      </div>
+    </div>`;
+
+    c.innerHTML=html;
+
+    document.getElementById('fw-add-rule-btn').addEventListener('click',async()=>{
+      const chain=document.getElementById('fw-add-chain').value;
+      const rule=document.getElementById('fw-add-rule').value.trim();
+      const errEl=document.getElementById('fw-add-error');
+      if(!rule){errEl.textContent='Rule is required';errEl.style.display='block';return}
+      errEl.style.display='none';
+      const btn=document.getElementById('fw-add-rule-btn');
+      btn.disabled=true;btn.textContent='Adding...';
+      try{
+        const r=await api('/firewall/rules',{
+          method:'POST',
+          body:JSON.stringify({chain,rule})
+        });
+        if(r.success){
+          showToast('Rule added','success');
+          renderFirewall();
+        } else {
+          errEl.textContent=r.message||'Failed to add rule';
+          errEl.style.display='block';
+          btn.disabled=false;btn.textContent='Add Rule';
+        }
+      }catch(e){
+        if(e.message!=='Unauthorized'){
+          errEl.textContent='Error: '+e.message;
+          errEl.style.display='block';
+          btn.disabled=false;btn.textContent='Add Rule';
+        }
+      }
+    });
+
+    document.getElementById('fw-del-rule-btn').addEventListener('click',async()=>{
+      const chain=document.getElementById('fw-del-chain').value;
+      const num=document.getElementById('fw-del-num').value;
+      const errEl=document.getElementById('fw-del-error');
+      if(!num){errEl.textContent='Rule number is required';errEl.style.display='block';return}
+      errEl.style.display='none';
+      const btn=document.getElementById('fw-del-rule-btn');
+      btn.disabled=true;btn.textContent='Deleting...';
+      try{
+        const r=await api('/firewall/rules/'+encodeURIComponent(chain)+'/'+num,{
+          method:'DELETE'
+        });
+        if(r.success){
+          showToast('Rule deleted','success');
+          renderFirewall();
+        } else {
+          errEl.textContent=r.message||'Failed to delete rule';
+          errEl.style.display='block';
+          btn.disabled=false;btn.textContent='Delete Rule';
+        }
+      }catch(e){
+        if(e.message!=='Unauthorized'){
+          errEl.textContent='Error: '+e.message;
+          errEl.style.display='block';
+          btn.disabled=false;btn.textContent='Delete Rule';
+        }
+      }
+    });
+
+    document.getElementById('fw-open-port-btn').addEventListener('click',async()=>{
+      const port=document.getElementById('fw-port-num').value;
+      const prot=document.getElementById('fw-port-prot').value;
+      const errEl=document.getElementById('fw-port-error');
+      if(!port||port<1||port>65535){errEl.textContent='Valid port (1-65535) is required';errEl.style.display='block';return}
+      errEl.style.display='none';
+      const btn=document.getElementById('fw-open-port-btn');
+      btn.disabled=true;btn.textContent='Opening...';
+      try{
+        const r=await api('/firewall/port',{
+          method:'POST',
+          body:JSON.stringify({port:parseInt(port),protocol:prot})
+        });
+        if(r.success){
+          showToast('Port opened','success');
+          renderFirewall();
+        } else {
+          errEl.textContent=r.message||'Failed to open port';
+          errEl.style.display='block';
+          btn.disabled=false;btn.textContent='Open Port';
+        }
+      }catch(e){
+        if(e.message!=='Unauthorized'){
+          errEl.textContent='Error: '+e.message;
+          errEl.style.display='block';
+          btn.disabled=false;btn.textContent='Open Port';
+        }
+      }
+    });
+
   }catch(e){
     if(e.message!=='Unauthorized')c.innerHTML=`<div class="error-msg">Error: ${e.message}</div>`;
   }

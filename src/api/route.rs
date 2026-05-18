@@ -111,5 +111,21 @@ pub fn v1() -> actix_web::Scope {
                     .service(web::resource("/reload").route(web::post().to(v1::webserver::reload_nginx)))
             )
             .service(web::resource("/monitor").route(web::get().to(v1::monitor::monitor_sse)))
+            .service(
+                web::scope("/admin")
+                    .service(web::resource("/users").route(web::get().to(v1::admin::list_users)))
+                    .service(web::resource("/users").route(web::post().to(v1::admin::create_user)))
+                    .service(web::resource("/users/{id}").route(web::put().to(v1::admin::update_user)))
+                    .service(web::resource("/users/{id}").route(web::delete().to(v1::admin::delete_user)))
+                    .service(web::resource("/users/{id}/reset-password").route(web::post().to(v1::admin::reset_password)))
+            )
+            .service(
+                web::scope("/service")
+                    .service(web::resource("/list").route(web::get().to(v1::service::list_services)))
+                    .service(web::resource("/{name}/start").route(web::post().to(v1::service::start_service)))
+                    .service(web::resource("/{name}/stop").route(web::post().to(v1::service::stop_service)))
+                    .service(web::resource("/{name}/restart").route(web::post().to(v1::service::restart_service)))
+                    .service(web::resource("/{name}/status").route(web::get().to(v1::service::get_service_status)))
+            )
     )
 }

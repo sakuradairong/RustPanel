@@ -6,7 +6,6 @@
  * @LastEditTime: 2024-05-25 16:23:02
  * @FilePath: \RustPanel\src\api\v1\mod.rs
  */
-
 pub mod monitor;
 pub mod docker;
 pub mod log;
@@ -18,6 +17,8 @@ pub mod admin;
 pub mod process;
 pub mod firewall;
 pub mod webserver;
+pub mod service;
+
 
 use actix_session::Session;
 use actix_web::{get, web, Error, HttpResponse};
