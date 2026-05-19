@@ -57,8 +57,12 @@ pub struct DeployCertBody {
 pub struct AcmeAccountBody {
     pub email: String,
     pub acme_provider: Option<String>,
+    #[serde(default = "default_true")]
     pub agree_tos: bool,
 }
+
+fn default_true() -> bool { true }
+
 
 // ── Constants ──
 
@@ -83,6 +87,10 @@ const DNS_PLUGINS: &[(&str, &str)] = &[
     ("he", "certbot-dns-dns-he"),
 ];
 
+const MANAGED_CERTBOT_DIR: &str = "./runtime/certbot";
+const MANAGED_CERTBOT_BIN: &str = "./runtime/certbot/bin/certbot";
+
+
 // ── Helpers ──
 
 fn is_linux() -> bool { cfg!(target_os = "linux") }
@@ -92,19 +100,152 @@ fn acme_provider_url(name: &str) -> Option<&'static str> {
 }
 
 async fn find_certbot() -> Option<String> {
+    // 1. Check managed installation (panel's own certbot venv)
+    if tokio::fs::metadata(MANAGED_CERTBOT_BIN).await.is_ok() {
+        return Some(MANAGED_CERTBOT_BIN.to_string());
+    }
+    // 2. Check standard system paths
     let paths = ["/usr/bin/certbot", "/usr/local/bin/certbot", "/opt/certbot/bin/certbot"];
     for path in &paths {
         if tokio::fs::metadata(path).await.is_ok() {
             return Some(path.to_string());
         }
     }
+    // 3. Check via `which`
     if let Ok(output) = Command::new("which").arg("certbot").output().await {
         if output.status.success() {
             let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
             if !path.is_empty() { return Some(path); }
         }
     }
-    None
+    // 4. Auto-install certbot via pip3 into managed venv
+    ensure_certbot().await
+}
+
+/// Install certbot into a managed Python virtualenv under the panel's runtime directory.
+async fn ensure_certbot() -> Option<String> {
+    if tokio::fs::metadata(MANAGED_CERTBOT_BIN).await.is_ok() {
+        return Some(MANAGED_CERTBOT_BIN.to_string());
+    }
+    let _ = tokio::fs::create_dir_all(MANAGED_CERTBOT_DIR).await;
+    let venv_dir = format!("{}/venv", MANAGED_CERTBOT_DIR);
+    let venv_pip = format!("{}/bin/pip", venv_dir);
+    // Create virtualenv
+    let ok = Command::new("python3")
+        .args(["-m", "venv", &venv_dir])
+        .status().await.map(|s| s.success()).unwrap_or(false);
+    if !ok { return None; }
+    // Upgrade pip, then install certbot
+    let _ = Command::new(&venv_pip).args(["install", "--upgrade", "pip"]).status().await;
+    let ok = Command::new(&venv_pip).args(["install", "certbot"]).status().await
+        .map(|s| s.success()).unwrap_or(false);
+    if !ok { return None; }
+    // Resolve absolute paths for reliable symlink
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let abs_venv_bin = cwd.join(&venv_dir).join("bin").join("certbot");
+    let abs_managed_bin = cwd.join(MANAGED_CERTBOT_BIN);
+    let _ = tokio::fs::create_dir_all(abs_managed_bin.parent().unwrap()).await;
+    let _ = std::os::unix::fs::symlink(&abs_venv_bin, &abs_managed_bin);
+    if tokio::fs::metadata(MANAGED_CERTBOT_BIN).await.is_ok() {
+        Some(MANAGED_CERTBOT_BIN.to_string())
+    } else {
+        None
+    }
+}
+
+
+// ── Setup endpoint ──
+
+#[derive(Serialize)]
+struct SetupStatus {
+    certbot_installed: bool,
+    certbot_path: Option<String>,
+    install_error: Option<String>,
+}
+
+/// POST /api/v1/ssl/setup — ensure certbot is installed, installing it if necessary
+pub async fn setup_certbot() -> HttpResponse {
+    // Force install attempt regardless of current state
+    let _ = tokio::fs::create_dir_all(MANAGED_CERTBOT_DIR).await;
+    let venv_dir = format!("{}/venv", MANAGED_CERTBOT_DIR);
+    let venv_pip = format!("{}/bin/pip", venv_dir);
+
+    // Check if already available
+    if let Some(path) = find_certbot().await {
+        return HttpResponse::Ok().json(ResponseStructure {
+            success: true, code: 200,
+            message: String::from("certbot already available"),
+            data: Some(SetupStatus {
+                certbot_installed: true,
+                certbot_path: Some(path),
+                install_error: None,
+            }),
+        });
+    }
+
+    // Install: create virtualenv
+    let venv_ok = Command::new("python3")
+        .args(["-m", "venv", &venv_dir])
+        .status().await.map(|s| s.success()).unwrap_or(false);
+    if !venv_ok {
+        return HttpResponse::InternalServerError().json(ResponseStructure {
+            success: false, code: 500,
+            message: String::from("Failed to create Python virtualenv for certbot"),
+            data: Some(SetupStatus {
+                certbot_installed: false, certbot_path: None,
+                install_error: Some(String::from("python3 -m venv failed")),
+            }),
+        });
+    }
+
+    let _ = Command::new(&venv_pip).args(["install", "--upgrade", "pip"]).status().await;
+
+    let status = Command::new(&venv_pip).args(["install", "certbot"]).status().await;
+    match status {
+        Ok(out) if out.success() => {
+            // Symlink
+            let cwd = std::env::current_dir().unwrap_or_default();
+            let abs_venv_bin = cwd.join(&venv_dir).join("bin").join("certbot");
+            let abs_managed_bin = cwd.join(MANAGED_CERTBOT_BIN);
+            let _ = tokio::fs::create_dir_all(abs_managed_bin.parent().unwrap()).await;
+            let _ = std::os::unix::fs::symlink(&abs_venv_bin, &abs_managed_bin);
+            if tokio::fs::metadata(MANAGED_CERTBOT_BIN).await.is_ok() {
+                HttpResponse::Ok().json(ResponseStructure {
+                    success: true, code: 200,
+                    message: String::from("certbot installed successfully"),
+                    data: Some(SetupStatus {
+                        certbot_installed: true,
+                        certbot_path: Some(MANAGED_CERTBOT_BIN.to_string()),
+                        install_error: None,
+                    }),
+                })
+            } else {
+                HttpResponse::InternalServerError().json(ResponseStructure {
+                    success: false, code: 500,
+                    message: String::from("certbot installed but binary not found"),
+                    data: Some(SetupStatus {
+                        certbot_installed: false, certbot_path: None,
+                        install_error: Some(String::from("certbot binary not found after installation")),
+                    }),
+                })
+            }
+        }
+        Ok(_) => {
+            let err = String::from("pip install certbot failed (check logs)");
+            HttpResponse::InternalServerError().json(ResponseStructure {
+                success: false, code: 500,
+                message: err.clone(),
+                data: Some(SetupStatus {
+                    certbot_installed: false, certbot_path: None,
+                    install_error: Some(err),
+                }),
+            })
+        }
+        Err(e) => HttpResponse::InternalServerError().json(ResponseStructureError {
+            success: false, code: 500,
+            message: format!("Failed to run pip install: {}", e),
+        }),
+    }
 }
 
 fn parse_certbot_domain(cert: &Value) -> CertInfo {
@@ -257,12 +398,6 @@ pub async fn register_acme_account(body: web::Json<AcmeAccountBody>) -> HttpResp
         }),
     };
 
-    if !body.agree_tos {
-        return HttpResponse::BadRequest().json(ResponseStructureError {
-            success: false, code: 400,
-            message: String::from("You must agree to the ACME Terms of Service"),
-        });
-    }
 
     let mut cmd = Command::new(&certbot_path);
     cmd.args(["register", "--non-interactive", "--agree-tos", "--email", &body.email]);
@@ -691,4 +826,194 @@ pub async fn deploy_certificate(body: web::Json<DeployCertBody>) -> HttpResponse
             message: format!("Nginx site '{}' not found", site_name),
         }),
     }
+}
+
+// ── Upload Certificate ──
+
+#[derive(Deserialize)]
+pub struct UploadCertBody {
+    pub name: String,
+    pub cert: String,
+    pub key: String,
+    #[serde(default)]
+    pub key_type: Option<String>,
+}
+
+/// POST /api/v1/ssl/upload — upload existing certificate and private key
+pub async fn upload_certificate(body: web::Json<UploadCertBody>) -> HttpResponse {
+    let cert_dir = format!("{}/certificates/{}", MANAGED_CERTBOT_DIR, body.name);
+    let _ = tokio::fs::create_dir_all(&cert_dir).await;
+
+    let cert_path = format!("{}/fullchain.pem", cert_dir);
+    let key_path = format!("{}/privkey.pem", cert_dir);
+
+    // Validate cert PEM
+    if !body.cert.contains("-----BEGIN") || !body.cert.contains("-----END") {
+        return HttpResponse::BadRequest().json(ResponseStructureError {
+            success: false, code: 400,
+            message: String::from("Invalid certificate format: must be PEM"),
+        });
+    }
+    if !body.key.contains("-----BEGIN") || !body.key.contains("-----END") {
+        return HttpResponse::BadRequest().json(ResponseStructureError {
+            success: false, code: 400,
+            message: String::from("Invalid private key format: must be PEM"),
+        });
+    }
+
+    if let Err(e) = tokio::fs::write(&cert_path, &body.cert).await {
+        return HttpResponse::InternalServerError().json(ResponseStructureError {
+            success: false, code: 500,
+            message: format!("Failed to write certificate: {}", e),
+        });
+    }
+    if let Err(e) = tokio::fs::write(&key_path, &body.key).await {
+        let _ = tokio::fs::remove_file(&cert_path).await;
+        return HttpResponse::InternalServerError().json(ResponseStructureError {
+            success: false, code: 500,
+            message: format!("Failed to write private key: {}", e),
+        });
+    }
+
+    // Verify with openssl
+    let output = Command::new("openssl")
+        .args(["x509", "-noout", "-subject", "-dates", "-in", &cert_path])
+        .output().await;
+
+    let info = match output {
+        Ok(out) if out.status.success() => {
+            let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+            let lines: Vec<&str> = stdout.lines().collect();
+            serde_json::json!({
+                "subject": lines.get(0).unwrap_or(&"").to_string(),
+                "dates": lines.get(1).or(lines.get(0)).unwrap_or(&"").to_string(),
+            })
+        }
+        _ => serde_json::json!({"note": "could not verify certificate details"}),
+    };
+
+    // Check if key matches cert
+    let key_check = Command::new("openssl")
+        .args(["pkey", "-in", &key_path, "-pubout"])
+        .output().await;
+    let cert_pubkey = Command::new("openssl")
+        .args(["x509", "-in", &cert_path, "-pubkey", "-noout"])
+        .output().await;
+
+    let key_match = if let (Ok(k), Ok(c)) = (key_check, cert_pubkey) {
+        k.stdout == c.stdout
+    } else {
+        false
+    };
+
+    if !key_match {
+        let _ = tokio::fs::remove_file(&cert_path).await;
+        let _ = tokio::fs::remove_file(&key_path).await;
+        return HttpResponse::BadRequest().json(ResponseStructureError {
+            success: false, code: 400,
+            message: String::from("Private key does not match certificate"),
+        });
+    }
+
+    HttpResponse::Ok().json(ResponseStructure {
+        success: true, code: 200,
+        message: String::from("Certificate uploaded successfully"),
+        data: Some(serde_json::json!({
+            "name": body.name,
+            "cert_path": cert_path,
+            "key_path": key_path,
+            "info": info,
+        })),
+    })
+}
+
+// ── Self-Signed Certificate ──
+
+#[derive(Deserialize)]
+pub struct SelfSignedBody {
+    pub domain: String,
+    #[serde(default)]
+    pub key_type: Option<String>,
+    #[serde(default = "default_365")]
+    pub days: u32,
+}
+
+fn default_365() -> u32 { 365 }
+
+/// POST /api/v1/ssl/self-signed — generate a self-signed certificate
+pub async fn self_signed_certificate(body: web::Json<SelfSignedBody>) -> HttpResponse {
+    let cert_dir = format!("{}/self-signed/{}", MANAGED_CERTBOT_DIR, body.domain);
+    let _ = tokio::fs::create_dir_all(&cert_dir).await;
+
+    let key_path = format!("{}/privkey.pem", cert_dir);
+    let csr_path = format!("{}/csr.pem", cert_dir);
+    let cert_path = format!("{}/fullchain.pem", cert_dir);
+
+    let key_type = body.key_type.as_deref().unwrap_or("rsa:2048");
+    let days = body.days.max(1).min(3650);
+
+    // Generate private key
+    match key_type {
+        k if k.starts_with("ec") || k.starts_with("ecc") || k == "prime256v1" || k == "secp384r1" => {
+            let curve = if k.starts_with("secp384") || k == "ec:384" { "secp384r1" } else { "prime256v1" };
+            let status = Command::new("openssl")
+                .args(["ecparam", "-genkey", "-name", curve, "-out", &key_path])
+                .status().await.map(|s| s.success()).unwrap_or(false);
+            if !status {
+                return HttpResponse::InternalServerError().json(ResponseStructureError {
+                    success: false, code: 500,
+                    message: String::from("Failed to generate EC private key"),
+                });
+            }
+        }
+        _ => {
+            let bits = key_type.trim_start_matches("rsa:").trim();
+            let bits: u32 = bits.parse().unwrap_or(2048).max(2048).min(4096);
+            let status = Command::new("openssl")
+                .args(["genrsa", "-out", &key_path, &bits.to_string()])
+                .status().await.map(|s| s.success()).unwrap_or(false);
+            if !status {
+                return HttpResponse::InternalServerError().json(ResponseStructureError {
+                    success: false, code: 500,
+                    message: String::from("Failed to generate RSA private key"),
+                });
+            }
+        }
+    }
+
+    // Generate self-signed cert
+    let status = Command::new("openssl")
+        .args(["req", "-new", "-x509", "-key", &key_path,
+               "-out", &cert_path,
+               "-days", &days.to_string(),
+               "-subj", &format!("/CN={}", body.domain)])
+        .status().await.map(|s| s.success()).unwrap_or(false);
+
+    if !status {
+        let _ = tokio::fs::remove_dir_all(&cert_dir).await;
+        return HttpResponse::InternalServerError().json(ResponseStructureError {
+            success: false, code: 500,
+            message: String::from("Failed to generate self-signed certificate"),
+        });
+    }
+
+    // Also generate SAN extension for better browser compatibility
+    let _ = Command::new("openssl")
+        .args(["req", "-new", "-key", &key_path, "-out", &csr_path,
+               "-subj", &format!("/CN={}", body.domain),
+               "-addext", &format!("subjectAltName=DNS:{}", body.domain)])
+        .output().await;
+
+    let _ = tokio::fs::remove_file(&csr_path).await;
+
+    HttpResponse::Ok().json(ResponseStructure {
+        success: true, code: 200,
+        message: String::from("Self-signed certificate generated"),
+        data: Some(serde_json::json!({
+            "domain": body.domain,
+            "cert_path": cert_path,
+            "key_path": key_path,
+            "days": days,
+        })),
+    })
 }

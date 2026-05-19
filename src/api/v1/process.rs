@@ -30,7 +30,8 @@ pub async fn list_processes(_: AuthUser, query: web::Query<ListProcessesQuery>) 
     let mut sys = System::new_all();
 
     // Sleep briefly so per-process CPU usage data can be sampled
-    std::thread::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL);
+    // Sleep briefly so per-process CPU usage data can be sampled
+    tokio::time::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL).await;
     sys.refresh_all();
 
     let mut processes: Vec<ProcessInfo> = Vec::new();

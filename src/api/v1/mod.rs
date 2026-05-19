@@ -19,6 +19,8 @@ pub mod firewall;
 pub mod webserver;
 pub mod service;
 pub mod ssl;
+pub mod installer;
+
 
 
 use actix_session::Session;

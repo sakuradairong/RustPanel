@@ -9,6 +9,8 @@
 pub mod container;
 pub mod image;
 pub mod network;
+pub mod volume;
+
 use bollard::Docker;
 
 use std::{error::Error, fmt};

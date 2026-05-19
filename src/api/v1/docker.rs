@@ -3,7 +3,7 @@ use serde::Deserialize;
 
 use crate::api::auth::AuthUser;
 use crate::api::{ResponseStructure, ResponseStructureError};
-use crate::models::docker::{container, image, network};
+use crate::models::docker::{container, image, network, volume};
 
 // ── Common path structs ──
 
@@ -300,6 +300,67 @@ pub async fn disconnect_network(
         Ok(_) => HttpResponse::Ok().json(ResponseStructure {
             success: true, code: 200, message: String::from("success"),
             data: Some("ok"),
+        }),
+        Err(err) => HttpResponse::InternalServerError().json(ResponseStructureError {
+            success: false, code: 500, message: err.to_string(),
+        }),
+    }
+}
+
+// ── Volume handlers ──
+
+
+#[derive(Deserialize)]
+pub struct CreateVolumeBody {
+    pub name: String,
+    #[serde(default)]
+    pub driver: Option<String>,
+}
+
+pub async fn list_volumes(_: AuthUser) -> HttpResponse {
+    match volume::list().await {
+        Ok(volumes) => HttpResponse::Ok().json(ResponseStructure {
+            success: true, code: 200, message: String::from("success"),
+            data: Some(volumes),
+        }),
+        Err(err) => HttpResponse::InternalServerError().json(ResponseStructureError {
+            success: false, code: 500, message: err.to_string(),
+        }),
+    }
+}
+
+pub async fn create_volume(_: AuthUser, body: web::Json<CreateVolumeBody>) -> HttpResponse {
+    let driver = body.driver.as_deref().unwrap_or("local");
+    match volume::create(&body.name, driver).await {
+        Ok(name) => HttpResponse::Ok().json(ResponseStructure {
+            success: true, code: 200, message: String::from("success"),
+            data: Some(serde_json::json!({"name": name})),
+        }),
+        Err(err) => HttpResponse::InternalServerError().json(ResponseStructureError {
+            success: false, code: 500, message: err.to_string(),
+        }),
+    }
+}
+
+pub async fn remove_volume(_: AuthUser, path: web::Path<String>) -> HttpResponse {
+    let name = path.into_inner();
+    match volume::remove(&name).await {
+        Ok(_) => HttpResponse::Ok().json(ResponseStructure {
+            success: true, code: 200, message: String::from("success"),
+            data: Some("ok"),
+        }),
+        Err(err) => HttpResponse::InternalServerError().json(ResponseStructureError {
+            success: false, code: 500, message: err.to_string(),
+        }),
+    }
+}
+
+pub async fn inspect_volume(_: AuthUser, path: web::Path<String>) -> HttpResponse {
+    let name = path.into_inner();
+    match volume::inspect(&name).await {
+        Ok(info) => HttpResponse::Ok().json(ResponseStructure {
+            success: true, code: 200, message: String::from("success"),
+            data: Some(info),
         }),
         Err(err) => HttpResponse::InternalServerError().json(ResponseStructureError {
             success: false, code: 500, message: err.to_string(),

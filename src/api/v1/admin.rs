@@ -78,6 +78,18 @@ fn validate_authority(authority: &str) -> bool {
     authority == "admin" || authority == "user"
 }
 
+fn require_admin(user: &AuthUser) -> Result<(), HttpResponse> {
+    if user.authority != "admin" {
+        return Err(HttpResponse::Forbidden().json(ResponseStructureError {
+            success: false,
+            code: 403,
+            message: String::from("Admin privileges required"),
+        }));
+    }
+    Ok(())
+}
+
+
 fn map_diesel_error(err: diesel::result::Error) -> HttpResponse {
     let common_err = CommonError::from(err);
     match common_err {
@@ -94,7 +106,8 @@ fn map_diesel_error(err: diesel::result::Error) -> HttpResponse {
     }
 }
 
-pub async fn list_users(_: AuthUser, pool: web::Data<DBPool>) -> HttpResponse {
+pub async fn list_users(user: AuthUser, pool: web::Data<DBPool>) -> HttpResponse {
+    if let Err(resp) = require_admin(&user) { return resp; }
     let mut conn = match pool.get() {
         Ok(c) => c,
         Err(_) => {
@@ -140,11 +153,9 @@ pub async fn list_users(_: AuthUser, pool: web::Data<DBPool>) -> HttpResponse {
     }
 }
 
-pub async fn create_user(
-    _: AuthUser,
-    pool: web::Data<DBPool>,
-    body: web::Json<CreateUserBody>,
-) -> HttpResponse {
+pub async fn create_user(user: AuthUser, pool: web::Data<DBPool>,
+body: web::Json<CreateUserBody>,) -> HttpResponse {
+    if let Err(resp) = require_admin(&user) { return resp; }
     let mut conn = match pool.get() {
         Ok(c) => c,
         Err(_) => {
@@ -213,12 +224,10 @@ pub async fn create_user(
     }
 }
 
-pub async fn update_user(
-    _: AuthUser,
-    pool: web::Data<DBPool>,
-    path: web::Path<UpdateUserPath>,
-    body: web::Json<UpdateUserBody>,
-) -> HttpResponse {
+pub async fn update_user(user: AuthUser, pool: web::Data<DBPool>,
+path: web::Path<UpdateUserPath>,
+body: web::Json<UpdateUserBody>,) -> HttpResponse {
+    if let Err(resp) = require_admin(&user) { return resp; }
     let mut conn = match pool.get() {
         Ok(c) => c,
         Err(_) => {
@@ -300,11 +309,9 @@ pub async fn update_user(
     }
 }
 
-pub async fn delete_user(
-    _: AuthUser,
-    pool: web::Data<DBPool>,
-    path: web::Path<DeleteUserPath>,
-) -> HttpResponse {
+pub async fn delete_user(user: AuthUser, pool: web::Data<DBPool>,
+path: web::Path<DeleteUserPath>,) -> HttpResponse {
+    if let Err(resp) = require_admin(&user) { return resp; }
     let mut conn = match pool.get() {
         Ok(c) => c,
         Err(_) => {
@@ -332,11 +339,9 @@ pub async fn delete_user(
     }
 }
 
-pub async fn reset_password(
-    _: AuthUser,
-    pool: web::Data<DBPool>,
-    path: web::Path<ResetPasswordPath>,
-) -> HttpResponse {
+pub async fn reset_password(user: AuthUser, pool: web::Data<DBPool>,
+path: web::Path<ResetPasswordPath>,) -> HttpResponse {
+    if let Err(resp) = require_admin(&user) { return resp; }
     let mut conn = match pool.get() {
         Ok(c) => c,
         Err(_) => {

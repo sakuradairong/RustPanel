@@ -12,7 +12,16 @@ pub struct ListData {
     #[serde(rename = "pageSize")]
     pub page_size: i32,
 }
+
 pub async fn list(_: AuthUser, data: web::Query<ListData>) -> HttpResponse {
+    // Security: reject paths containing ".." to prevent directory traversal
+    if data.path.contains("..") {
+        return HttpResponse::BadRequest().json(ResponseStructureError {
+            success: false,
+            code: 400,
+            message: String::from("Path must not contain '..'"),
+        });
+    }
     HttpResponse::Ok().json(ResponseStructure {
         success: true,
         code: 200,
@@ -22,6 +31,14 @@ pub async fn list(_: AuthUser, data: web::Query<ListData>) -> HttpResponse {
 }
 
 pub async fn save(_: AuthUser, data: web::Json<SaveData>) -> HttpResponse {
+    // Security: reject paths containing ".." to prevent directory traversal
+    if data.path.contains("..") {
+        return HttpResponse::BadRequest().json(ResponseStructureError {
+            success: false,
+            code: 400,
+            message: String::from("Path must not contain '..'"),
+        });
+    }
     match file::save(data.into_inner()) {
         Ok(_) => HttpResponse::Ok().json(ResponseStructure {
             success: true,
@@ -36,11 +53,21 @@ pub async fn save(_: AuthUser, data: web::Json<SaveData>) -> HttpResponse {
         }),
     }
 }
+
 #[derive(Deserialize)]
 pub struct ContentData {
     pub path: String,
 }
+
 pub async fn content(_: AuthUser, data: web::Query<ContentData>) -> HttpResponse {
+    // Security: reject paths containing ".." to prevent directory traversal
+    if data.path.contains("..") {
+        return HttpResponse::BadRequest().json(ResponseStructureError {
+            success: false,
+            code: 400,
+            message: String::from("Path must not contain '..'"),
+        });
+    }
     match file::content(data.path.to_string()) {
         Ok((content, extension)) => HttpResponse::Ok().json(ResponseStructure {
             success: true,
