@@ -1,20 +1,11 @@
-/*
- * @Descripttion: Docker management API handlers
- * @version:
- * @Author: Wynters
- * @Date: 2024-05-25 16:23:02
- * @LastEditTime: 2025-12-15 13:17:54
- * @FilePath: \RustPanel\src\api\v1\docker.rs
- */
-
 use actix_web::{web, HttpResponse};
 use serde::Deserialize;
 
 use crate::api::auth::AuthUser;
 use crate::api::{ResponseStructure, ResponseStructureError};
-use crate::models::docker::{container, network};
+use crate::models::docker::{container, image, network};
 
-// ── Container query parameters ──
+// ── Common path structs ──
 
 #[derive(Deserialize)]
 pub struct ListContainersQuery {
@@ -39,9 +30,7 @@ pub struct ContainerLogsQuery {
     pub tail: usize,
 }
 
-fn default_tail() -> usize {
-    100
-}
+fn default_tail() -> usize { 100 }
 
 // ── Network query parameters ──
 
@@ -63,21 +52,86 @@ pub struct NetworkConnectBody {
     pub container_id: String,
 }
 
+// ── Image handlers ──
+
+#[derive(Deserialize)]
+pub struct PullImageBody {
+    pub image: String,
+}
+
+pub async fn list_images(_: AuthUser) -> HttpResponse {
+    match image::list().await {
+        Ok(images) => HttpResponse::Ok().json(ResponseStructure {
+            success: true, code: 200, message: String::from("success"),
+            data: Some(images),
+        }),
+        Err(err) => HttpResponse::InternalServerError().json(ResponseStructureError {
+            success: false, code: 500, message: err.to_string(),
+        }),
+    }
+}
+
+pub async fn pull_image(_: AuthUser, body: web::Json<PullImageBody>) -> HttpResponse {
+    match image::pull(&body.image).await {
+        Ok(output) => HttpResponse::Ok().json(ResponseStructure {
+            success: true, code: 200, message: String::from("success"),
+            data: Some(serde_json::json!({"output": output})),
+        }),
+        Err(err) => HttpResponse::InternalServerError().json(ResponseStructureError {
+            success: false, code: 500, message: err.to_string(),
+        }),
+    }
+}
+
+pub async fn remove_image(_: AuthUser, path: web::Path<ContainerIdPath>) -> HttpResponse {
+    match image::remove(&path.id).await {
+        Ok(_) => HttpResponse::Ok().json(ResponseStructure {
+            success: true, code: 200, message: String::from("success"),
+            data: None::<()>,
+        }),
+        Err(err) => HttpResponse::InternalServerError().json(ResponseStructureError {
+            success: false, code: 500, message: err.to_string(),
+        }),
+    }
+}
+
+// ── Container inspect/stats ──
+
+pub async fn inspect_container(_: AuthUser, path: web::Path<ContainerIdPath>) -> HttpResponse {
+    match container::inspect(&path.id).await {
+        Ok(info) => HttpResponse::Ok().json(ResponseStructure {
+            success: true, code: 200, message: String::from("success"),
+            data: Some(info),
+        }),
+        Err(err) => HttpResponse::InternalServerError().json(ResponseStructureError {
+            success: false, code: 500, message: err.to_string(),
+        }),
+    }
+}
+
+pub async fn container_stats(_: AuthUser, path: web::Path<ContainerIdPath>) -> HttpResponse {
+    match container::stats(&path.id).await {
+        Ok(info) => HttpResponse::Ok().json(ResponseStructure {
+            success: true, code: 200, message: String::from("success"),
+            data: Some(info),
+        }),
+        Err(err) => HttpResponse::InternalServerError().json(ResponseStructureError {
+            success: false, code: 500, message: err.to_string(),
+        }),
+    }
+}
+
 // ── Container handlers ──
 
 pub async fn list_containers(_: AuthUser, query: web::Query<ListContainersQuery>) -> HttpResponse {
     let all = query.all.unwrap_or(false);
     match container::list(all).await {
         Ok(containers) => HttpResponse::Ok().json(ResponseStructure {
-            success: true,
-            code: 200,
-            message: String::from("success"),
+            success: true, code: 200, message: String::from("success"),
             data: Some(containers),
         }),
         Err(err) => HttpResponse::InternalServerError().json(ResponseStructureError {
-            success: false,
-            code: 500,
-            message: err.to_string(),
+            success: false, code: 500, message: err.to_string(),
         }),
     }
 }
@@ -85,15 +139,11 @@ pub async fn list_containers(_: AuthUser, query: web::Query<ListContainersQuery>
 pub async fn create_container(_: AuthUser, body: web::Json<CreateContainerBody>) -> HttpResponse {
     match container::create(&body.name, &body.image, body.cmd.clone()).await {
         Ok(id) => HttpResponse::Ok().json(ResponseStructure {
-            success: true,
-            code: 200,
-            message: String::from("success"),
+            success: true, code: 200, message: String::from("success"),
             data: Some(serde_json::json!({"container_id": id})),
         }),
         Err(err) => HttpResponse::InternalServerError().json(ResponseStructureError {
-            success: false,
-            code: 500,
-            message: err.to_string(),
+            success: false, code: 500, message: err.to_string(),
         }),
     }
 }
@@ -101,15 +151,11 @@ pub async fn create_container(_: AuthUser, body: web::Json<CreateContainerBody>)
 pub async fn start_container(_: AuthUser, path: web::Path<ContainerIdPath>) -> HttpResponse {
     match container::start(&path.id).await {
         Ok(_) => HttpResponse::Ok().json(ResponseStructure {
-            success: true,
-            code: 200,
-            message: String::from("success"),
+            success: true, code: 200, message: String::from("success"),
             data: Some("ok"),
         }),
         Err(err) => HttpResponse::InternalServerError().json(ResponseStructureError {
-            success: false,
-            code: 500,
-            message: err.to_string(),
+            success: false, code: 500, message: err.to_string(),
         }),
     }
 }
@@ -117,15 +163,11 @@ pub async fn start_container(_: AuthUser, path: web::Path<ContainerIdPath>) -> H
 pub async fn stop_container(_: AuthUser, path: web::Path<ContainerIdPath>) -> HttpResponse {
     match container::stop(&path.id).await {
         Ok(_) => HttpResponse::Ok().json(ResponseStructure {
-            success: true,
-            code: 200,
-            message: String::from("success"),
+            success: true, code: 200, message: String::from("success"),
             data: Some("ok"),
         }),
         Err(err) => HttpResponse::InternalServerError().json(ResponseStructureError {
-            success: false,
-            code: 500,
-            message: err.to_string(),
+            success: false, code: 500, message: err.to_string(),
         }),
     }
 }
@@ -133,15 +175,11 @@ pub async fn stop_container(_: AuthUser, path: web::Path<ContainerIdPath>) -> Ht
 pub async fn restart_container(_: AuthUser, path: web::Path<ContainerIdPath>) -> HttpResponse {
     match container::restart(&path.id).await {
         Ok(_) => HttpResponse::Ok().json(ResponseStructure {
-            success: true,
-            code: 200,
-            message: String::from("success"),
+            success: true, code: 200, message: String::from("success"),
             data: Some("ok"),
         }),
         Err(err) => HttpResponse::InternalServerError().json(ResponseStructureError {
-            success: false,
-            code: 500,
-            message: err.to_string(),
+            success: false, code: 500, message: err.to_string(),
         }),
     }
 }
@@ -149,15 +187,11 @@ pub async fn restart_container(_: AuthUser, path: web::Path<ContainerIdPath>) ->
 pub async fn remove_container(_: AuthUser, path: web::Path<ContainerIdPath>) -> HttpResponse {
     match container::remove(&path.id).await {
         Ok(_) => HttpResponse::Ok().json(ResponseStructure {
-            success: true,
-            code: 200,
-            message: String::from("success"),
+            success: true, code: 200, message: String::from("success"),
             data: Some("ok"),
         }),
         Err(err) => HttpResponse::InternalServerError().json(ResponseStructureError {
-            success: false,
-            code: 500,
-            message: err.to_string(),
+            success: false, code: 500, message: err.to_string(),
         }),
     }
 }
@@ -165,15 +199,11 @@ pub async fn remove_container(_: AuthUser, path: web::Path<ContainerIdPath>) -> 
 pub async fn pause_container(_: AuthUser, path: web::Path<ContainerIdPath>) -> HttpResponse {
     match container::pause(&path.id).await {
         Ok(_) => HttpResponse::Ok().json(ResponseStructure {
-            success: true,
-            code: 200,
-            message: String::from("success"),
+            success: true, code: 200, message: String::from("success"),
             data: Some("ok"),
         }),
         Err(err) => HttpResponse::InternalServerError().json(ResponseStructureError {
-            success: false,
-            code: 500,
-            message: err.to_string(),
+            success: false, code: 500, message: err.to_string(),
         }),
     }
 }
@@ -181,15 +211,11 @@ pub async fn pause_container(_: AuthUser, path: web::Path<ContainerIdPath>) -> H
 pub async fn unpause_container(_: AuthUser, path: web::Path<ContainerIdPath>) -> HttpResponse {
     match container::unpause(&path.id).await {
         Ok(_) => HttpResponse::Ok().json(ResponseStructure {
-            success: true,
-            code: 200,
-            message: String::from("success"),
+            success: true, code: 200, message: String::from("success"),
             data: Some("ok"),
         }),
         Err(err) => HttpResponse::InternalServerError().json(ResponseStructureError {
-            success: false,
-            code: 500,
-            message: err.to_string(),
+            success: false, code: 500, message: err.to_string(),
         }),
     }
 }
@@ -201,15 +227,11 @@ pub async fn get_container_logs(
 ) -> HttpResponse {
     match container::logs(&path.id, query.tail).await {
         Ok(logs) => HttpResponse::Ok().json(ResponseStructure {
-            success: true,
-            code: 200,
-            message: String::from("success"),
+            success: true, code: 200, message: String::from("success"),
             data: Some(serde_json::json!({"logs": logs})),
         }),
         Err(err) => HttpResponse::InternalServerError().json(ResponseStructureError {
-            success: false,
-            code: 500,
-            message: err.to_string(),
+            success: false, code: 500, message: err.to_string(),
         }),
     }
 }
@@ -219,42 +241,24 @@ pub async fn get_container_logs(
 pub async fn list_networks(_: AuthUser) -> HttpResponse {
     match network::list().await {
         Ok(networks) => HttpResponse::Ok().json(ResponseStructure {
-            success: true,
-            code: 200,
-            message: String::from("success"),
+            success: true, code: 200, message: String::from("success"),
             data: Some(networks),
         }),
         Err(err) => HttpResponse::InternalServerError().json(ResponseStructureError {
-            success: false,
-            code: 500,
-            message: err.to_string(),
+            success: false, code: 500, message: err.to_string(),
         }),
     }
 }
 
 pub async fn create_network(_: AuthUser, body: web::Json<CreateNetworkBody>) -> HttpResponse {
-    let driver = body
-        .driver
-        .clone()
-        .unwrap_or_else(|| String::from("bridge"));
-    match network::create(
-        &body.name,
-        &driver,
-        body.subnet.as_deref(),
-        body.gateway.as_deref(),
-    )
-    .await
-    {
+    let driver = body.driver.clone().unwrap_or_else(|| String::from("bridge"));
+    match network::create(&body.name, &driver, body.subnet.as_deref(), body.gateway.as_deref()).await {
         Ok(id) => HttpResponse::Ok().json(ResponseStructure {
-            success: true,
-            code: 200,
-            message: String::from("success"),
+            success: true, code: 200, message: String::from("success"),
             data: Some(serde_json::json!({"network_id": id})),
         }),
         Err(err) => HttpResponse::InternalServerError().json(ResponseStructureError {
-            success: false,
-            code: 500,
-            message: err.to_string(),
+            success: false, code: 500, message: err.to_string(),
         }),
     }
 }
@@ -262,15 +266,11 @@ pub async fn create_network(_: AuthUser, body: web::Json<CreateNetworkBody>) -> 
 pub async fn remove_network(_: AuthUser, path: web::Path<NetworkIdPath>) -> HttpResponse {
     match network::remove(&path.id).await {
         Ok(_) => HttpResponse::Ok().json(ResponseStructure {
-            success: true,
-            code: 200,
-            message: String::from("success"),
+            success: true, code: 200, message: String::from("success"),
             data: Some("ok"),
         }),
         Err(err) => HttpResponse::InternalServerError().json(ResponseStructureError {
-            success: false,
-            code: 500,
-            message: err.to_string(),
+            success: false, code: 500, message: err.to_string(),
         }),
     }
 }
@@ -282,15 +282,11 @@ pub async fn connect_network(
 ) -> HttpResponse {
     match network::connect(&path.id, &body.container_id).await {
         Ok(_) => HttpResponse::Ok().json(ResponseStructure {
-            success: true,
-            code: 200,
-            message: String::from("success"),
+            success: true, code: 200, message: String::from("success"),
             data: Some("ok"),
         }),
         Err(err) => HttpResponse::InternalServerError().json(ResponseStructureError {
-            success: false,
-            code: 500,
-            message: err.to_string(),
+            success: false, code: 500, message: err.to_string(),
         }),
     }
 }
@@ -302,15 +298,11 @@ pub async fn disconnect_network(
 ) -> HttpResponse {
     match network::disconnect(&path.id, &body.container_id).await {
         Ok(_) => HttpResponse::Ok().json(ResponseStructure {
-            success: true,
-            code: 200,
-            message: String::from("success"),
+            success: true, code: 200, message: String::from("success"),
             data: Some("ok"),
         }),
         Err(err) => HttpResponse::InternalServerError().json(ResponseStructureError {
-            success: false,
-            code: 500,
-            message: err.to_string(),
+            success: false, code: 500, message: err.to_string(),
         }),
     }
 }

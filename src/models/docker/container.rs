@@ -1,12 +1,3 @@
-/*
- * @Descripttion: Docker container management model
- * @version:
- * @Author: Wynters
- * @Date: 2024-07-11 04:20:17
- * @LastEditTime: 2025-12-15 13:17:54
- * @FilePath: \RustPanel\src\models\docker\container.rs
- */
-
 use std::error::Error;
 use std::fmt;
 
@@ -14,7 +5,7 @@ use bollard::container::LogOutput;
 use bollard::models::{ContainerCreateBody, PortSummaryTypeEnum};
 use bollard::query_parameters::{
     CreateContainerOptions, ListContainersOptions, LogsOptions, RemoveContainerOptions,
-    RestartContainerOptions, StartContainerOptions, StopContainerOptions,
+    RestartContainerOptions, StartContainerOptions, StatsOptions, StopContainerOptions,
 };
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
@@ -127,49 +118,28 @@ pub async fn create(
 
 pub async fn start(container_id: &str) -> Result<(), Box<dyn Error + Send + Sync>> {
     let client = docker()?;
-    let options = StartContainerOptions {
-        ..Default::default()
-    };
-    client
-        .start_container(container_id, Some(options))
-        .await?;
+    client.start_container(container_id, None::<StartContainerOptions>).await?;
     Ok(())
 }
 
 pub async fn stop(container_id: &str) -> Result<(), Box<dyn Error + Send + Sync>> {
     let client = docker()?;
-    let options = StopContainerOptions {
-        t: Some(10),
-        signal: None,
-    };
-    client
-        .stop_container(container_id, Some(options))
-        .await?;
+    let options = StopContainerOptions { t: Some(10), signal: None };
+    client.stop_container(container_id, Some(options)).await?;
     Ok(())
 }
 
 pub async fn remove(container_id: &str) -> Result<(), Box<dyn Error + Send + Sync>> {
     let client = docker()?;
-    let options = RemoveContainerOptions {
-        force: true,
-        v: true,
-        ..Default::default()
-    };
-    client
-        .remove_container(container_id, Some(options))
-        .await?;
+    let options = RemoveContainerOptions { force: true, v: true, ..Default::default() };
+    client.remove_container(container_id, Some(options)).await?;
     Ok(())
 }
 
 pub async fn restart(container_id: &str) -> Result<(), Box<dyn Error + Send + Sync>> {
     let client = docker()?;
-    let options = RestartContainerOptions {
-        t: Some(10),
-        signal: None,
-    };
-    client
-        .restart_container(container_id, Some(options))
-        .await?;
+    let options = RestartContainerOptions { t: Some(10), signal: None };
+    client.restart_container(container_id, Some(options)).await?;
     Ok(())
 }
 
@@ -206,11 +176,28 @@ pub async fn logs(
                 output.push_str(&String::from_utf8_lossy(&message));
             }
             Ok(LogOutput::StdIn { .. }) | Ok(LogOutput::Console { .. }) => {}
-            Err(e) => {
-                output.push_str(&format!("[Docker error: {}]", e));
-            }
+            Err(e) => output.push_str(&format!("[Docker error: {}]", e)),
         }
     }
 
     Ok(output)
+}
+
+pub async fn inspect(container_id: &str) -> Result<serde_json::Value, Box<dyn Error + Send + Sync>> {
+    let client = docker()?;
+    let info = client.inspect_container(container_id, None).await?;
+    Ok(serde_json::to_value(info)?)
+}
+
+pub async fn stats(container_id: &str) -> Result<serde_json::Value, Box<dyn Error + Send + Sync>> {
+    let client = docker()?;
+    let options = StatsOptions { stream: false, one_shot: true };
+    let mut stream = client.stats(container_id, Some(options));
+    if let Some(item) = stream.next().await {
+        match item {
+            Ok(stats) => return Ok(serde_json::to_value(stats)?),
+            Err(e) => return Err(Box::new(e)),
+        }
+    }
+    Err(Box::new(std::io::Error::new(std::io::ErrorKind::NotFound, "no stats data")))
 }

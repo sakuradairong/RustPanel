@@ -43,56 +43,25 @@ pub fn v1() -> actix_web::Scope {
             )
             .service(
                 web::scope("/docker")
-                    .service(
-                        web::resource("/containers")
-                            .route(web::get().to(v1::docker::list_containers))
-                            .route(web::post().to(v1::docker::create_container)),
-                    )
-                    .service(
-                        web::resource("/containers/{id}/start")
-                            .route(web::post().to(v1::docker::start_container)),
-                    )
-                    .service(
-                        web::resource("/containers/{id}/stop")
-                            .route(web::post().to(v1::docker::stop_container)),
-                    )
-                    .service(
-                        web::resource("/containers/{id}/restart")
-                            .route(web::post().to(v1::docker::restart_container)),
-                    )
-                    .service(
-                        web::resource("/containers/{id}/remove")
-                            .route(web::post().to(v1::docker::remove_container)),
-                    )
-                    .service(
-                        web::resource("/containers/{id}/pause")
-                            .route(web::post().to(v1::docker::pause_container)),
-                    )
-                    .service(
-                        web::resource("/containers/{id}/unpause")
-                            .route(web::post().to(v1::docker::unpause_container)),
-                    )
-                    .service(
-                        web::resource("/containers/{id}/logs")
-                            .route(web::get().to(v1::docker::get_container_logs)),
-                    )
-                    .service(
-                        web::resource("/networks")
-                            .route(web::get().to(v1::docker::list_networks))
-                            .route(web::post().to(v1::docker::create_network)),
-                    )
-                    .service(
-                        web::resource("/networks/{id}/remove")
-                            .route(web::post().to(v1::docker::remove_network)),
-                    )
-                    .service(
-                        web::resource("/networks/{id}/connect")
-                            .route(web::post().to(v1::docker::connect_network)),
-                    )
-                    .service(
-                        web::resource("/networks/{id}/disconnect")
-                            .route(web::post().to(v1::docker::disconnect_network)),
-                    ),
+                    .service(web::resource("/containers")
+                        .route(web::get().to(v1::docker::list_containers))
+                        .route(web::post().to(v1::docker::create_container)))
+                    .service(web::resource("/containers/{id}/start").route(web::post().to(v1::docker::start_container)))
+                    .service(web::resource("/containers/{id}/stop").route(web::post().to(v1::docker::stop_container)))
+                    .service(web::resource("/containers/{id}/restart").route(web::post().to(v1::docker::restart_container)))
+                    .service(web::resource("/containers/{id}/remove").route(web::post().to(v1::docker::remove_container)))
+                    .service(web::resource("/containers/{id}/pause").route(web::post().to(v1::docker::pause_container)))
+                    .service(web::resource("/containers/{id}/unpause").route(web::post().to(v1::docker::unpause_container)))
+                    .service(web::resource("/containers/{id}/logs").route(web::get().to(v1::docker::get_container_logs)))
+                    .service(web::resource("/containers/{id}/inspect").route(web::get().to(v1::docker::inspect_container)))
+                    .service(web::resource("/containers/{id}/stats").route(web::get().to(v1::docker::container_stats)))
+                    .service(web::resource("/images").route(web::get().to(v1::docker::list_images)))
+                    .service(web::resource("/images/pull").route(web::post().to(v1::docker::pull_image)))
+                    .service(web::resource("/images/{id}/remove").route(web::post().to(v1::docker::remove_image)))
+                    .service(web::resource("/networks").route(web::get().to(v1::docker::list_networks)).route(web::post().to(v1::docker::create_network)))
+                    .service(web::resource("/networks/{id}/remove").route(web::post().to(v1::docker::remove_network)))
+                    .service(web::resource("/networks/{id}/connect").route(web::post().to(v1::docker::connect_network)))
+                    .service(web::resource("/networks/{id}/disconnect").route(web::post().to(v1::docker::disconnect_network)))
             )
             .service(
                 web::scope("/firewall")
