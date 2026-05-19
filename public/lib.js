@@ -245,14 +245,6 @@ function showToast(message,type){
 }
 
 
-// ── File Content Viewer ──
-async function renderFileContent(){
 
-
-// ── File Manager ──
-let fileListState={path:'/',page:1};
-
-async function renderFileList(){
-  const c=document.getElementById('content');
-function formatTime(ts){if(!ts)return'';const d=new Date(ts*1000);return d.toLocaleString()}
 function escapeHtml(s){const d=document.createElement("div");d.textContent=s;return d.innerHTML}
+function formatTime(ts){if(!ts)return"";const d=new Date(ts*1000);return d.toLocaleString()}
