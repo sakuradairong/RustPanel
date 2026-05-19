@@ -12,4 +12,5 @@
 /server/db/mongo/*
 /server/db/postgre/*
 /server/safe/*
-*.pid
+*.pidnode_modules/
+public/app_full.js
