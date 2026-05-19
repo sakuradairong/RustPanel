@@ -470,6 +470,7 @@ let processSearchKeyword='';
 
 function cleanupPage(){
   if(monitorEventSource){monitorEventSource.close();monitorEventSource=null}
+  if(dashboardEventSource){dashboardEventSource.close();dashboardEventSource=null}
   if(processInterval){clearInterval(processInterval);processInterval=null}
   if(logRefreshInterval){clearInterval(logRefreshInterval);logRefreshInterval=null;logRefreshEnabled=false}
 }
@@ -710,81 +711,146 @@ function renderLogin(){
 }
 
 // ── Dashboard ──
+let dashboardEventSource=null;
 async function renderDashboard(){
   const c=document.getElementById('content');
   if(!c)return;
-  c.innerHTML='<div style="text-align:center;padding:2rem;color:var(--text-dim)">Loading system info...</div>';
+  cleanupPage();
+  if(dashboardEventSource){dashboardEventSource.close();dashboardEventSource=null}
+
+  // Skeletons rendersıs
+  c.innerHTML=`
+  <div class="card-grid card-grid-4 mb-4" id="ds-stats">
+    <div class="card stat-card"><div class="label">CPU Usage</div><div class="value" style="color:var(--text-dim);font-size:1rem">...</div><div class="sub-value">loading</div></div>
+    <div class="card stat-card"><div class="label">Memory</div><div class="value" style="color:var(--text-dim);font-size:1rem">...</div><div class="sub-value">loading</div></div>
+    <div class="card stat-card"><div class="label">Swap</div><div class="value" style="color:var(--text-dim);font-size:1rem">...</div><div class="sub-value">loading</div></div>
+    <div class="card stat-card"><div class="label">Kernel</div><div class="value" style="color:var(--text-dim);font-size:1rem">...</div><div class="sub-value">loading</div></div>
+  </div>
+  <div class="card-grid card-grid-2">
+    <div class="card"><h3 style="font-size:0.95rem;margin-bottom:.75rem;color:var(--text-muted)">CPU Usage</h3><div id="ds-cpu-cores" style="text-align:center;padding:1rem;color:var(--text-dim)">Loading...</div></div>
+    <div class="card"><h3 style="font-size:0.95rem;margin-bottom:.75rem;color:var(--text-muted)">Memory Usage</h3><div id="ds-memory" style="text-align:center;padding:1rem;color:var(--text-dim)">Loading...</div></div>
+  </div>
+  <div class="card mt-4"><h3 style="font-size:0.95rem;margin-bottom:.75rem;color:var(--text-muted)">Disk Usage</h3><div id="ds-disks" style="text-align:center;padding:1rem;color:var(--text-dim)">Loading...</div></div>
+  <div class="card mt-4"><h3 style="font-size:0.95rem;margin-bottom:.75rem;color:var(--text-muted)">Network Interfaces</h3><div id="ds-network" style="text-align:center;padding:1rem;color:var(--text-dim)">Loading...</div></div>`;
+
   try{
+    // Initial load: static OS info + disk layout
     const j=await api('/os_info');
-    if(!j.success||!j.data){c.innerHTML='<div class="error-msg">Failed to load system info</div>';return}
+    if(!j.success||!j.data){c.querySelector('#ds-cpu-cores').textContent='Failed to load';return}
     const d=j.data;
     const os=d.os||{};
     const mem=d.memory||{};
-    const cpu=d.cpu||[];
-    const disk=d.disk||[];
-    const net=d.network||[];
+    const cpus=d.cpu||[];
+    const disks=d.disk||[];
+    const nets=d.network||[];
+    const coreCount=cpus.length;
 
-    const memTotal=mem.total||0;
-    const memUsed=mem.used||0;
-    const memPct=memTotal>0?((memUsed/memTotal)*100).toFixed(1):0;
-    const swapTotal=mem.swap_total||0;
-    const swapUsed=mem.swap_used||0;
+    // Render static OS info
+    document.getElementById('ds-stats').querySelectorAll('.card.stat-card')[3].innerHTML=
+      '<div class="label">Kernel</div><div class="value" style="color:var(--text);font-size:0.9rem">'+(os.kernel_version||'N/A')+'</div><div class="sub-value">'+(os.host_name||os.hostname||'')+'</div>';
 
-    let cpuAvg=0;
-    if(cpu.length>0){cpuAvg=(cpu.reduce((a,b)=>a+b,0)/cpu.length).toFixed(1)}
-
-    let diskRows='';
-    disk.forEach(dd=>{
-      const total=(dd.total||1);
-      const avail=(dd.available||0);
+    // Disk (static - rarely changes)
+    let diskHtml='';
+    disks.forEach(dd=>{
+      const total=dd.total||1;
+      const avail=dd.available||0;
       const used=total-avail;
       const pct=((used/total)*100).toFixed(1);
-      diskRows+=`<div class="disk-row"><span class="mount">${dd.mount_point||'?'}</span><span class="usage">${formatSize(used*1048576)} / ${formatSize(total*1048576)} (${pct}%)</span></div>`;
-    });
-
-    let cpuBars='';
-    cpu.forEach((val,i)=>{
-      const pct=Math.min(val,100).toFixed(1);
       const color=pct>80?'red':pct>50?'orange':'green';
-      cpuBars+=`<div class="cpu-item"><div class="cpu-label"><span>CPU #${i}</span><span>${pct}%</span></div><div class="bar"><div class="fill ${color}" style="width:${pct}%"></div></div></div>`;
+      diskHtml+=`<div class="disk-row"><span class="mount">${dd.mount_point||'?'}</span>
+        <div class="progress-bar" style="flex:1;margin:0 12px"><div class="fill ${color}" style="width:${Math.min(pct,100)}%"></div></div>
+        <span class="usage">${formatSize(used*1048576)} / ${formatSize(total*1048576)} (${pct}%)</span></div>`;
     });
+    document.getElementById('ds-disks').innerHTML=diskHtml||'<div class="text-muted text-sm">No disk data</div>';
 
-    c.innerHTML=`
-    <div class="card-grid card-grid-4 mb-4">
-      <div class="card stat-card"><div class="label">CPU Usage</div><div class="value" style="color:${cpuAvg>80?'var(--error)':cpuAvg>50?'var(--warning)':'var(--success)'}">${cpuAvg}%</div><div class="sub-value">${cpu.length} cores</div></div>
-      <div class="card stat-card"><div class="label">Memory</div><div class="value" style="color:var(--primary)">${memPct}%</div><div class="sub-value">${formatSize(memUsed*1048576)} / ${formatSize(memTotal*1048576)}</div></div>
-      <div class="card stat-card"><div class="label">Swap</div><div class="value" style="color:var(--secondary)">${swapTotal>0?((swapUsed/swapTotal)*100).toFixed(1):0}%</div><div class="sub-value">${formatSize(swapUsed*1048576)} / ${formatSize(swapTotal*1048576)}</div></div>
-      <div class="card stat-card"><div class="label">Kernel</div><div class="value" style="color:var(--text)">${os.kernel_version||'N/A'}</div><div class="sub-value">${os.host_name||os.hostname||''}</div></div>
-    </div>
-    <div class="card-grid card-grid-2">
-      <div class="card">
-        <h3 style="font-size:0.95rem;margin-bottom:.75rem;color:var(--text-muted)">CPU Cores</h3>
-        <div class="cpu-grid">${cpuBars||'<div class="text-muted text-sm">No data</div>'}</div>
-      </div>
-      <div class="card">
-        <h3 style="font-size:0.95rem;margin-bottom:.75rem;color:var(--text-muted)">Memory Usage</h3>
-        <div class="text-sm" style="display:flex;justify-content:space-between;margin-bottom:4px"><span>RAM</span><span>${formatSize(memUsed*1048576)} / ${formatSize(memTotal*1048576)}</span></div>
-        <div class="progress-bar"><div class="fill ${memPct>80?'red':memPct>50?'orange':'blue'}" style="width:${Math.min(memPct,100)}%"></div></div>
-        ${swapTotal>0?`
-        <div class="text-sm mt-3" style="display:flex;justify-content:space-between;margin-bottom:4px"><span>Swap</span><span>${formatSize(swapUsed*1048576)} / ${formatSize(swapTotal*1048576)}</span></div>
-        <div class="progress-bar"><div class="fill ${(swapUsed/swapTotal)>0.8?'red':(swapUsed/swapTotal)>0.5?'orange':'blue'}" style="width:${Math.min((swapUsed/swapTotal)*100,100)}%"></div></div>
-        `:''}
-      </div>
-    </div>
-    <div class="card mt-4">
-      <h3 style="font-size:0.95rem;margin-bottom:.75rem;color:var(--text-muted)">Disk Usage</h3>
-      ${diskRows||'<div class="text-muted text-sm">No disk data</div>'}
-    </div>
-    ${net.length>0?`
-    <div class="card mt-4">
-      <h3 style="font-size:0.95rem;margin-bottom:.75rem;color:var(--text-muted)">Network Interfaces</h3>
-      <div class="table-wrap"><table>
-        <thead><tr><th>Interface</th><th>Received</th><th>Transmitted</th></tr></thead>
-        <tbody>${net.map(n=>`<tr><td>${n.name||'?'}</td><td>${formatSize((n.total_received||0)*1024)}</td><td>${formatSize((n.total_transmitted||0)*1024)}</td></tr>`).join('')}</tbody>
-      </table></div>
-    </div>`:''}`;
+    // Network (static - will use SSE for live rates)
+    if(nets.length>0){
+      let netHtml='<div class="table-wrap"><table><thead><tr><th>Interface</th><th>Received</th><th>Transmitted</th></tr></thead><tbody>';
+      nets.forEach(n=>{
+        netHtml+=`<tr><td>${n.name||'?'}</td><td id="net-rx-${n.name}">${formatSize((n.total_received||0)*1024)}</td><td id="net-tx-${n.name}">${formatSize((n.total_transmitted||0)*1024)}</td></tr>`;
+      });
+      netHtml+='</tbody></table></div>';
+      document.getElementById('ds-network').innerHTML=netHtml;
+    } else {
+      document.getElementById('ds-network').innerHTML='<div class="text-muted text-sm">No network data</div>';
+    }
+
+    // Store initial network counters for delta calculation
+    let prevNet={};
+    nets.forEach(n=>{prevNet[n.name]={rx:n.total_received||0,tx:n.total_transmitted||0}});
+
+    // Open SSE for live CPU/Memory/Swap/Network updates
+    const token=getToken();
+    const es=new EventSource('/api/v1/monitor?token='+encodeURIComponent(token));
+    es.onmessage=function(ev){
+      try{
+        const s=JSON.parse(ev.data);
+        const cpuGlobal=s.cpu||0;
+        const memUsed=s.memory?s.memory.used:0;
+        const memTotal=s.memory?s.memory.total:1;
+        const swUsed=s.swap?s.swap.used:0;
+        const swTotal=s.swap?s.swap.total:1;
+        const memPct=((memUsed/memTotal)*100).toFixed(1);
+        const swPct=swTotal>0?((swUsed/swTotal)*100).toFixed(1):'0.0';
+        const cpuColor=cpuGlobal>80?'var(--error)':cpuGlobal>50?'var(--warning)':'var(--success)';
+        const memColor=memPct>80?'var(--error)':memPct>50?'var(--warning)':'var(--primary)';
+        const swColor=swPct>80?'var(--error)':swPct>50?'var(--warning)':'var(--secondary)';
+
+        // Update stat cards
+        const stats=document.getElementById('ds-stats');
+        if(stats){
+          const cards=stats.querySelectorAll('.card.stat-card');
+          cards[0].innerHTML='<div class="label">CPU Usage</div><div class="value" style="color:'+cpuColor+'">'+cpuGlobal.toFixed(1)+'%</div><div class="sub-value">'+coreCount+' cores</div>';
+          cards[1].innerHTML='<div class="label">Memory</div><div class="value" style="color:'+memColor+'">'+memPct+'%</div><div class="sub-value">'+formatSize(memUsed)+' / '+formatSize(memTotal)+'</div>';
+          cards[2].innerHTML='<div class="label">Swap</div><div class="value" style="color:'+swColor+'">'+swPct+'%</div><div class="sub-value">'+formatSize(swUsed)+' / '+formatSize(swTotal)+'</div>';
+        }
+
+        // CPU bar
+        const cpuEl=document.getElementById('ds-cpu-cores');
+        if(cpuEl){
+          const pct=Math.min(cpuGlobal,100).toFixed(1);
+          const color=pct>80?'red':pct>50?'orange':'green';
+          cpuEl.innerHTML='<div class="cpu-item"><div class="cpu-label"><span>Total</span><span>'+pct+'%</span></div><div class="bar"><div class="fill '+color+'" style="width:'+pct+'%"></div></div></div>';
+        }
+
+        // Memory bar
+        const memEl=document.getElementById('ds-memory');
+        if(memEl){
+          const memPctNum=Math.min(parseFloat(memPct),100);
+          const mColor=memPctNum>80?'red':memPctNum>50?'orange':'blue';
+          let html='<div class="text-sm" style="display:flex;justify-content:space-between;margin-bottom:4px"><span>RAM</span><span>'+formatSize(memUsed)+' / '+formatSize(memTotal)+'</span></div>';
+          html+='<div class="progress-bar"><div class="fill '+mColor+'" style="width:'+memPctNum+'%"></div></div>';
+          if(swTotal>0){
+            const swPctNum=Math.min(parseFloat(swPct),100);
+            const sColor=swPctNum>80?'red':swPctNum>50?'orange':'blue';
+            html+='<div class="text-sm mt-3" style="display:flex;justify-content:space-between;margin-bottom:4px"><span>Swap</span><span>'+formatSize(swUsed)+' / '+formatSize(swTotal)+'</span></div>';
+            html+='<div class="progress-bar"><div class="fill '+sColor+'" style="width:'+swPctNum+'%"></div></div>';
+          }
+          memEl.innerHTML=html;
+        }
+
+        // Network update (delta from previous sample)
+        if(s.network&&Array.isArray(s.network)){
+          s.network.forEach(ni=>{
+            const rxEl=document.getElementById('net-rx-'+ni.name);
+            const txEl=document.getElementById('net-tx-'+ni.name);
+            if(rxEl){
+              const prev=prevNet[ni.name];
+              if(prev){
+                const rxDelta=ni.received-prev.rx;
+                const txDelta=ni.transmitted-prev.tx;
+                rxEl.textContent=(rxDelta>=0?formatSize(rxDelta):'?')+'/s';
+                txEl.textContent=(txDelta>=0?formatSize(txDelta):'?')+'/s';
+              }
+              prevNet[ni.name]={rx:ni.received,tx:ni.transmitted};
+            }
+          });
+        }
+      }catch(e){/* ignore parse errors */ }
+    };
+    es.onerror=function(){/* SSE connection will auto-reconnect */};
   }catch(e){
-    if(e.message!=='Unauthorized')c.innerHTML=`<div class="error-msg">Error: ${e.message}</div>`;
+    if(e.message!=='Unauthorized')document.getElementById('ds-cpu-cores').textContent='Error: '+e.message;
   }
 }
 
@@ -1721,8 +1787,8 @@ async function renderWebServer(){
   <div class="tabs">
     <div class="tab active" data-tab="status">Sites List</div>
     <div class="tab" data-tab="create">Create Site</div>
+    <div class="tab" data-tab="ssl">SSL</div>
     <div class="tab" data-tab="config">Config</div>
-  </div>
   <div id="webserver-tab-content">
     <div style="text-align:center;padding:2rem;color:var(--text-dim)">Select a tab</div>
   </div>`;
@@ -1749,11 +1815,13 @@ async function loadWebServerStatus(){
     const d=j.data||{};
     const installed=d.installed?'Yes':'No';
     const running=d.running?'Yes':'No';
+    const version=d.version||'';
     const configTest=d.config_test||d.config_test_result||'N/A';
     card.innerHTML=`
-    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:1rem">
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:1rem">
       <div><div class="text-sm text-dim">Installed</div><div style="font-size:1.25rem;font-weight:600;color:${d.installed?'var(--success)':'var(--error)'}">${installed}</div></div>
       <div><div class="text-sm text-dim">Running</div><div style="font-size:1.25rem;font-weight:600;color:${d.running?'var(--success)':'var(--error)'}">${running}</div></div>
+      <div><div class="text-sm text-dim">Version</div><div style="font-size:1rem;font-weight:600;color:var(--text)">${version?escapeHtml(version):'N/A'}</div></div>
       <div><div class="text-sm text-dim">Config Test</div><div style="font-size:1rem;font-weight:600;color:${(configTest+'').toLowerCase()==='successful'||(configTest+'').toLowerCase()==='ok'?'var(--success)':'var(--warning)'}">${escapeHtml(configTest)}</div></div>
     </div>`;
   }catch(e){
@@ -1766,8 +1834,8 @@ async function renderWebServerTab(tab){
   if(!tc)return;
   if(tab==='status')await renderWebServerSites(tc);
   else if(tab==='create')renderWebServerCreate(tc);
+  else if(tab==='ssl')renderWebServerSsl(tc);
   else if(tab==='config')renderWebServerConfig(tc);
-}
 
 async function renderWebServerSites(tc){
   tc.innerHTML='<div style="text-align:center;padding:2rem;color:var(--text-dim)">Loading sites...</div>';
@@ -1776,20 +1844,42 @@ async function renderWebServerSites(tc){
     if(!j.success){tc.innerHTML='<div class="error-msg">Failed to load sites</div>';return}
     const sites=j.data||[];
     if(!Array.isArray(sites)){tc.innerHTML='<div class="error-msg">Invalid site data</div>';return}
-    let html='<div class="card"><div class="table-wrap"><table><thead><tr><th>Server Name</th><th>Root</th><th>Enabled</th><th>Actions</th></tr></thead><tbody>';
+    let html='<div class="card"><div class="table-wrap"><table><thead><tr><th>Server Name</th><th>Listen</th><th>Proxy / Root</th><th>SSL</th><th>Status</th><th>Actions</th></tr></thead><tbody>';
     sites.forEach(s=>{
-      const name=s.server_name||s.name||'';
-      const root=s.root||s.document_root||'';
+      const displayName=s.server_name||s.name||'';
+      const fileName=s.name||'';
+      const listen=s.listen||'80';
+      const proxy=s.proxy_pass||s.root||s.document_root||'';
       const enabled=s.enabled!=null?s.enabled:true;
+      const ssl=s.ssl?'Yes':'No';
       html+=`<tr>
-        <td>${escapeHtml(name)}</td>
-        <td style="color:var(--text-muted);font-size:0.8rem">${escapeHtml(root)}</td>
-        <td><span class="status-badge ${enabled?'running':'exited'}">${enabled?'Enabled':'Disabled'}</span></td>
-        <td><button class="btn btn-sm btn-danger site-delete-btn" data-name="${escapeHtml(name)}">Delete</button></td>
+        <td>${escapeHtml(displayName)}</td>
+        <td style="font-family:monospace;font-size:0.8rem">${escapeHtml(listen)}</td>
+        <td style="color:var(--text-muted);font-size:0.8rem;max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(proxy)}</td>
+        <td>${ssl==='Yes'?'🔒':''}</td>
+        <td><span class="status-badge ${enabled?'running':'exited'}" id="status-${escapeHtml(fileName)}">${enabled?'Enabled':'Disabled'}</span></td>
+        <td style="white-space:nowrap">
+          <button class="btn btn-sm ${enabled?'btn-warning':'btn-success'} site-toggle-btn" data-name="${escapeHtml(fileName)}" data-enable="${enabled?'false':'true'}">${enabled?'Disable':'Enable'}</button>
+          <button class="btn btn-sm btn-danger site-delete-btn" data-name="${escapeHtml(fileName)}">Delete</button>
+        </td>
       </tr>`;
     });
     html+='</tbody></table></div></div>';
     tc.innerHTML=html;
+    tc.querySelectorAll('.site-toggle-btn').forEach(btn=>{
+      btn.addEventListener('click',async function(){
+        const name=this.dataset.name;
+        const enable=this.dataset.enable==='true';
+        const action=enable?'enable':'disable';
+        this.disabled=true;
+        this.textContent='...';
+        try{
+          const r=await api('/webserver/sites/'+encodeURIComponent(name)+'/'+action,{method:'POST'});
+          if(r.success){showToast('Site '+(enable?'enabled':'disabled'),'success');renderWebServerSites(tc)}
+          else showToast(r.message||'Toggle failed','error');
+        }catch(e){if(e.message!=='Unauthorized')showToast('Error: '+e.message,'error')}
+      });
+    });
     tc.querySelectorAll('.site-delete-btn').forEach(btn=>{
       btn.addEventListener('click',async function(){
         const name=this.dataset.name;
@@ -1934,6 +2024,299 @@ function renderWebServerConfig(tc){
   });
 }
 
+// ── SSL Certificates (1Panel-style) ──
+async function renderWebServerSsl(tc){
+  tc.innerHTML='<div style="padding:1rem;color:var(--text-dim);text-align:center">Loading...</div>';
+  try{
+    const [certJ, acctJ] = await Promise.all([
+      api('/ssl/certificates'),
+      api('/ssl/accounts')
+    ]);
+
+    const d=certJ.data||{};
+    const certs=d.certificates||[];
+    const installed=d.installed;
+    const accounts=acctJ.data?.accounts||[];
+    const hasAccount=accounts.length>0;
+
+    if(!installed){
+      tc.innerHTML=`
+      <div class="card" style="text-align:center;padding:2rem">
+        <p style="color:var(--text-dim);margin-bottom:1rem">certbot not installed.</p>
+        <p style="font-size:0.85rem;color:var(--text-muted)">
+          <code style="display:inline-block;padding:6px 12px;background:var(--bg);border:1px solid var(--border);border-radius:4px">sudo apt install certbot</code>
+          <code style="display:inline-block;margin-top:4px;padding:6px 12px;background:var(--bg);border:1px solid var(--border);border-radius:4px">sudo dnf install certbot</code>
+        </p>
+      </div>`;
+      return;
+    }
+
+    // Build layout: header + accounts info + cert table
+    let html='';
+    html+=`<div class="flex justify-between items-center mb-4">
+      <h3 style="font-size:0.95rem;font-weight:600">SSL Certificates</h3>
+      <div>
+        <button class="btn btn-sm btn-success" id="ssl-issue-btn">+ Issue</button>
+      </div>
+    </div>`;
+
+    // Account status bar
+    if(hasAccount){
+      html+=`<div class="card mb-4" style="padding:8px 14px;background:var(--bg);font-size:0.85rem">
+        <span style="color:var(--success)">✓</span> ACME account: <strong>${escapeHtml(accounts[0].email||'')}</strong>
+        ${accounts[0].ca?'<span style="color:var(--text-dim)"> | CA: '+escapeHtml(accounts[0].ca)+'</span>':''}
+      </div>`;
+    } else {
+      html+=`<div class="card mb-4" style="padding:8px 14px;background:var(--bg);font-size:0.85rem">
+        <span style="color:var(--warning)">⚠</span> No ACME account registered.
+        <button class="btn btn-sm" id="ssl-register-account-btn" style="margin-left:8px">Register</button>
+      </div>`;
+    }
+
+    // Certificate table
+    if(certs.length===0){
+      html+='<div class="card"><div class="text-muted" style="text-align:center;padding:2rem">No certificates. Click "Issue" to create one.</div></div>';
+    } else {
+      html+='<div class="card"><div class="table-wrap"><table><thead><tr><th>Domain</th><th>Subject Alt Names</th><th>Expiry</th><th>Key Type</th><th>Actions</th></tr></thead><tbody>';
+      certs.forEach(c=>{
+        const domain=escapeHtml(c.domain||'?');
+        const expiry=c.expiry||'Unknown';
+        const expDate=new Date(expiry);
+        const expStr=isNaN(expDate.getTime())?escapeHtml(expiry):expDate.toLocaleString();
+        const expiringSoon=!isNaN(expDate.getTime())&&(expDate-Date.now())<30*24*60*60*1000;
+        const sans=(c.san||[]).filter(s=>s!==c.domain).map(s=>escapeHtml(s)).join(', ');
+        const keyType=c.key_type||'';
+        html+=`<tr>
+          <td><strong>${domain}</strong></td>
+          <td style="font-size:0.8rem;color:var(--text-muted);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(sans)}">${sans||'—'}</td>
+          <td style="color:${expiringSoon?'var(--error)':'var(--text)'};white-space:nowrap">${expStr}</td>
+          <td style="font-size:0.8rem;color:var(--text-dim)">${keyType?escapeHtml(keyType):'—'}</td>
+          <td style="white-space:nowrap">
+            <button class="btn btn-sm ssl-renew-btn" data-domain="${domain}">Renew</button>
+            <button class="btn btn-sm ssl-deploy-btn" data-domain="${domain}">Deploy</button>
+            <button class="btn btn-sm btn-danger ssl-delete-btn" data-domain="${domain}">✕</button>
+          </td>
+        </tr>`;
+      });
+      html+='</tbody></table></div></div>';
+    }
+
+    tc.innerHTML=html;
+
+    // Issue button
+    document.getElementById('ssl-issue-btn')?.addEventListener('click',async()=>{
+      const provJ=await api('/ssl/providers');
+      renderWebServerSslIssue(tc,provJ.data?.providers||[]);
+    });
+
+    // Register account
+    document.getElementById('ssl-register-account-btn')?.addEventListener('click',()=>renderWebServerSslAccount(tc));
+
+    // Renew
+    tc.querySelectorAll('.ssl-renew-btn').forEach(btn=>{
+      btn.addEventListener('click',async function(){
+        const domain=this.dataset.domain;
+        this.disabled=true;this.textContent='...';
+        try{
+          const r=await api('/ssl/renew/'+encodeURIComponent(domain),{method:'POST'});
+          if(r.success) showToast('Renewed: '+domain,'success');
+          else showToast(r.message||'Renew failed','error');
+        }catch(e){if(e.message!=='Unauthorized')showToast('Error: '+e.message,'error')}
+        renderWebServerSsl(tc);
+      });
+    });
+
+    // Deploy
+    tc.querySelectorAll('.ssl-deploy-btn').forEach(btn=>{
+      btn.addEventListener('click',async function(){
+        const domain=this.dataset.domain;
+        const siteName=prompt('Deploy certificate to which nginx site? (site config filename)',domain);
+        if(!siteName)return;
+        this.disabled=true;this.textContent='...';
+        try{
+          const r=await api('/ssl/deploy',{method:'POST',body:JSON.stringify({site_name:siteName,domain})});
+          if(r.success) showToast('Deployed to '+siteName,'success');
+          else showToast(r.message||'Deploy failed','error');
+        }catch(e){if(e.message!=='Unauthorized')showToast('Error: '+e.message,'error')}
+        renderWebServerSsl(tc);
+      });
+    });
+
+    // Delete
+    tc.querySelectorAll('.ssl-delete-btn').forEach(btn=>{
+      btn.addEventListener('click',async function(){
+        const domain=this.dataset.domain;
+        if(!confirm('Delete certificate for '+domain+'?'))return;
+        this.disabled=true;this.textContent='...';
+        try{
+          const r=await api('/ssl/certificates/'+encodeURIComponent(domain),{method:'DELETE'});
+          if(r.success){showToast('Deleted','success');renderWebServerSsl(tc)}
+          else showToast(r.message||'Delete failed','error');
+        }catch(e){if(e.message!=='Unauthorized')showToast('Error: '+e.message,'error')}
+      });
+    });
+  }catch(e){
+    if(e.message!=='Unauthorized')tc.innerHTML='<div class="error-msg">Error: '+e.message+'</div>';
+  }
+}
+
+async function renderWebServerSslAccount(tc){
+  tc.innerHTML=`
+  <div class="card" style="max-width:500px">
+    <h3 style="font-size:0.95rem;margin-bottom:1rem">Register ACME Account</h3>
+    <div class="field">
+      <label>Email</label>
+      <input type="email" id="acct-email" placeholder="admin@example.com">
+    </div>
+    <div class="field">
+      <label>ACME Provider</label>
+      <select id="acct-provider">
+        <option value="letsencrypt">Let's Encrypt</option>
+        <option value="letsencrypt-staging">Let's Encrypt (Staging)</option>
+        <option value="zerossl">ZeroSSL</option>
+        <option value="buypass">Buypass</option>
+        <option value="google">Google Public CA</option>
+      </select>
+    </div>
+    <div class="field">
+      <label><input type="checkbox" id="acct-agree"> I agree to the ACME Terms of Service</label>
+    </div>
+    <div id="acct-error" class="error-msg" style="display:none"></div>
+    <div class="btn-row mt-3">
+      <button class="btn btn-sm" id="acct-back">Back</button>
+      <button class="btn btn-sm btn-success" id="acct-register">Register</button>
+    </div>
+  </div>`;
+
+  document.getElementById('acct-back').addEventListener('click',()=>renderWebServerSsl(tc));
+  document.getElementById('acct-register').addEventListener('click',async function(){
+    const email=document.getElementById('acct-email').value.trim();
+    const provider=document.getElementById('acct-provider').value;
+    const agree=document.getElementById('acct-agree').checked;
+    const errEl=document.getElementById('acct-error');
+    if(!email){errEl.textContent='Email is required';errEl.style.display='block';return}
+    if(!agree){errEl.textContent='You must agree to the Terms of Service';errEl.style.display='block';return}
+    errEl.style.display='none';
+    this.disabled=true;this.textContent='Registering...';
+    try{
+      const r=await api('/ssl/accounts',{method:'POST',body:JSON.stringify({email,acme_provider:provider,agree_tos:agree})});
+      if(r.success){showToast('Account registered','success');renderWebServerSsl(tc)}
+      else {errEl.textContent=r.message||'Registration failed';errEl.style.display='block';this.disabled=false;this.textContent='Register'}
+    }catch(e){if(e.message!=='Unauthorized'){errEl.textContent='Error: '+e.message;errEl.style.display='block'}this.disabled=false;this.textContent='Register'}
+  });
+}
+
+async function renderWebServerSslIssue(tc,providers){
+  const provOpts=(providers||[]).map(p=>`<option value="${p.name}">${p.label}${p.is_staging?' (Staging)':''}</option>`).join('');
+  tc.innerHTML=`
+  <div class="card">
+    <h3 style="font-size:0.95rem;margin-bottom:1rem">Issue SSL Certificate</h3>
+    <div class="form-row">
+      <div class="field">
+        <label>ACME Provider</label>
+        <select id="ssl-acme-provider">${provOpts||'<option value="letsencrypt">Let\'s Encrypt</option>'}</select>
+      </div>
+      <div class="field" style="flex:2">
+        <label>Domain(s)</label>
+        <input type="text" id="ssl-domain" placeholder="example.com" style="width:100%">
+        <div class="text-sm text-dim mt-1">Separate multiple with commas</div>
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="field">
+        <label>Challenge Type</label>
+        <select id="ssl-challenge">
+          <option value="http">HTTP-01 (port 80)</option>
+          <option value="dns">DNS-01 (wildcard)</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Email</label>
+        <input type="email" id="ssl-email" placeholder="admin@example.com">
+      </div>
+    </div>
+    <div id="ssl-http-options">
+      <div class="field">
+        <label>Webroot (optional, for HTTP validation)</label>
+        <input type="text" id="ssl-webroot" placeholder="/var/www/html">
+        <div class="text-sm text-dim mt-1">Leave empty for standalone mode (certbot will bind port 80)</div>
+      </div>
+    </div>
+    <div id="ssl-dns-options" style="display:none">
+      <div class="field">
+        <label>DNS Plugin (optional)</label>
+        <select id="ssl-dns-plugin">
+          <option value="">Manual DNS (add TXT record yourself)</option>
+          <option value="cloudflare">Cloudflare</option>
+          <option value="aliyun">Aliyun DNS</option>
+          <option value="dnspod">DNSPod</option>
+          <option value="godaddy">GoDaddy</option>
+          <option value="aws">AWS Route53</option>
+          <option value="digitalocean">DigitalOcean</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>DNS Credentials File Path (for selected plugin)</label>
+        <input type="text" id="ssl-dns-creds" placeholder="/etc/letsencrypt/cloudflare.ini">
+      </div>
+    </div>
+    <div id="ssl-issue-error" class="error-msg" style="display:none"></div>
+    <div id="ssl-issue-result" style="display:none"></div>
+    <div class="btn-row mt-3">
+      <button class="btn btn-sm" id="ssl-issue-back">Back</button>
+      <button class="btn btn-sm btn-success" id="ssl-issue-start">Issue Certificate</button>
+    </div>
+  </div>`;
+
+  // Toggle DNS options
+  document.getElementById('ssl-challenge').addEventListener('change',function(){
+    const isDns=this.value==='dns';
+    document.getElementById('ssl-http-options').style.display=isDns?'none':'';
+    document.getElementById('ssl-dns-options').style.display=isDns?'':'none';
+  });
+
+  document.getElementById('ssl-issue-back').addEventListener('click',()=>renderWebServerSsl(tc));
+  document.getElementById('ssl-issue-start').addEventListener('click',async function(){
+    const domainStr=document.getElementById('ssl-domain').value.trim();
+    const email=document.getElementById('ssl-email').value.trim();
+    const webroot=document.getElementById('ssl-webroot').value.trim();
+    const provider=document.getElementById('ssl-acme-provider').value;
+    const challenge=document.getElementById('ssl-challenge').value;
+    const dnsPlugin=document.getElementById('ssl-dns-plugin').value;
+    const dnsCreds=document.getElementById('ssl-dns-creds').value.trim();
+    const errEl=document.getElementById('ssl-issue-error');
+    const resEl=document.getElementById('ssl-issue-result');
+
+    if(!domainStr){errEl.textContent='At least one domain is required';errEl.style.display='block';return}
+    errEl.style.display='none';resEl.style.display='none';
+
+    const domains=domainStr.split(',').map(s=>s.trim()).filter(Boolean);
+    const btn=this;btn.disabled=true;btn.textContent='Issuing...';
+    try{
+      const body={domains,acme_provider:provider,challenge};
+      if(email)body.email=email;
+      if(challenge==='dns'){
+        if(dnsPlugin)body.dns_plugin=dnsPlugin;
+        if(dnsCreds)body.dns_credentials=dnsCreds;
+      } else {
+        if(webroot)body.webroot=webroot;
+      }
+      const r=await api('/ssl/issue',{method:'POST',body:JSON.stringify(body)});
+      if(r.success){
+        resEl.style.display='block';
+        resEl.innerHTML='<span style="color:var(--success)">✓ Certificate issued!</span><pre style="margin-top:8px;background:var(--bg);padding:8px;border-radius:4px;font-size:0.8rem;max-height:200px;overflow-y:auto">'+escapeHtml(r.data?.output||'')+'</pre>';
+        btn.textContent='Done';
+      } else {
+        errEl.textContent=r.message||'Issue failed';
+        errEl.style.display='block';btn.disabled=false;btn.textContent='Issue Certificate';
+      }
+    }catch(e){
+      if(e.message!=='Unauthorized'){
+        errEl.textContent='Error: '+e.message;errEl.style.display='block';btn.disabled=false;btn.textContent='Issue Certificate';
+      }
+    }
+  });
+}
 // ── Firewall ──
 async function renderFirewall(){
   const c=document.getElementById('content');

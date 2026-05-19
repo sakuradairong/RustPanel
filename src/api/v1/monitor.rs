@@ -16,7 +16,6 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 use sysinfo::{Disks, Networks, System};
 
-use crate::api::auth::AuthUser;
 
 lazy_static! {
     static ref SYS: Mutex<System> = Mutex::new(System::new_all());
@@ -126,11 +125,40 @@ fn monitor_stream() -> MonitorStream {
     }
 }
 
-pub async fn monitor_sse(_: AuthUser, _req: HttpRequest) -> HttpResponse {
-    HttpResponse::Ok()
-        .insert_header(("Content-Type", "text/event-stream"))
-        .insert_header(("Cache-Control", "no-cache"))
-        .insert_header(("Connection", "keep-alive"))
-        .insert_header(("Access-Control-Allow-Origin", "*"))
-        .streaming(monitor_stream())
+pub async fn monitor_sse(req: HttpRequest) -> HttpResponse {
+    // Accept token from query parameter (for EventSource which can't set headers)
+    // or from Authorization header (for regular fetch-based usage)
+    let token: Option<String> = req.headers()
+        .get("Authorization")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| {
+            if let Some(stripped) = s.strip_prefix("Bearer ") {
+                stripped.to_string()
+            } else {
+                s.to_string()
+            }
+        })
+        .or_else(|| {
+            web::Query::<std::collections::HashMap<String, String>>::from_query(req.query_string())
+                .ok()
+                .and_then(|params| params.get("token").cloned())
+        });
+
+    // Validate token by attempting to decode it
+    if let Some(token_str) = token {
+        if crate::api::auth::decode_jwt(&token_str).is_ok() {
+            return HttpResponse::Ok()
+                .insert_header(("Content-Type", "text/event-stream"))
+                .insert_header(("Cache-Control", "no-cache"))
+                .insert_header(("Connection", "keep-alive"))
+                .insert_header(("Access-Control-Allow-Origin", "*"))
+                .streaming(monitor_stream());
+        }
+    }
+
+    HttpResponse::Unauthorized().json(serde_json::json!({
+        "success": false,
+        "code": 401,
+        "message": "Unauthorized"
+    }))
 }

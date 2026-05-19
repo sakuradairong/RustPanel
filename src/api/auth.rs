@@ -30,36 +30,42 @@ impl FromRequest for AuthUser {
 
     fn from_request(req: &HttpRequest, _: &mut Payload) -> Self::Future {
 
-        match req.headers().get("Authorization"){
+        match req.headers().get("Authorization") {
             Some(token) => {
                 if let Ok(token_str) = token.to_str() {
-                if let Ok(claims) = decode_jwt(token_str) {
-                    // decoding tokens and obtaining user information
-                    if let Ok(user) = serde_json::from_str::<SlimUser>(&claims.sub) {
-                        if let Some(pool) = req.app_data::<web::Data<DBPool>>() {
-                            if let Ok(db_user) = find_user_by_id(
-                                user.id,
-                                &pool.clone(),
-                            )
-                            .map_err(|_| CommonError::InternalServerError(String::from("db error")))
-                            {
-                                if let Some(db_user) = db_user {
-                                    if db_user.password != user.password {
-                                        return ready(Err(CommonError::Unauthorized(
-                                            String::from("password error"),
-                                        )
-                                        .into()));
+                    // strip "Bearer " prefix if present
+                    let jwt_str = if let Some(stripped) = token_str.strip_prefix("Bearer ") {
+                        stripped
+                    } else {
+                        token_str
+                    };
+                    if let Ok(claims) = decode_jwt(jwt_str) {
+                        // decoding tokens and obtaining user information
+                        if let Ok(user) = serde_json::from_str::<SlimUser>(&claims.sub) {
+                            if let Some(pool) = req.app_data::<web::Data<DBPool>>() {
+                                if let Ok(db_user) = find_user_by_id(
+                                    user.id,
+                                    &pool.clone(),
+                                )
+                                .map_err(|_| CommonError::InternalServerError(String::from("db error")))
+                                {
+                                    if let Some(db_user) = db_user {
+                                        if db_user.password != user.password {
+                                            return ready(Err(CommonError::Unauthorized(
+                                                String::from("password error"),
+                                            )
+                                            .into()));
+                                        }
+                                    } else {
+                                        return ready(Err(CommonError::Unauthorized(String::from("user not found")).into()));
                                     }
-                                } else {
-                                    return ready(Err(CommonError::Unauthorized(String::from("user not found")).into()));
                                 }
+                            } else {
+                                return ready(Err(CommonError::InternalServerError(String::from("DBPool not found")).into()));
                             }
-                        } else {
-                            return ready(Err(CommonError::InternalServerError(String::from("DBPool not found")).into()));
+                            return ready(Ok(user));
                         }
-                        return ready(Ok(user));
                     }
-                }
                 }
             }
             None => {
@@ -105,9 +111,9 @@ pub fn verify_password_sha1(hash: &str,salt: &str, password: &str) -> Result<boo
 
 
 #[derive(Debug, Serialize, Deserialize)]
-struct Claims {
-    sub: String,
-    exp: usize,
+pub(crate) struct Claims {
+    pub(crate) sub: String,
+    pub(crate) exp: usize,
 }
 
 pub fn generate_jwt(subject: &str) -> Result<String, jsonwebtoken::errors::Error> {
@@ -125,7 +131,7 @@ pub fn generate_jwt(subject: &str) -> Result<String, jsonwebtoken::errors::Error
     )?)
 }
 
-fn decode_jwt(token: &str) -> Result<Claims, jsonwebtoken::errors::Error> {
+pub(crate) fn decode_jwt(token: &str) -> Result<Claims, jsonwebtoken::errors::Error> {
     let key = DecodingKey::from_secret(USER_PASSWORD_KEY.as_ref());
 
     // 手动创建 Validation 实例，并设置所需的字段

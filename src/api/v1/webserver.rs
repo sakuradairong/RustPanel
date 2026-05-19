@@ -23,10 +23,12 @@ pub struct NginxSitePath {
 #[derive(Deserialize)]
 pub struct CreateSiteBody {
     pub server_name: String,
-    pub root: String,
+    pub root: Option<String>,
     pub listen: Option<u16>,
     pub proxy_pass: Option<String>,
-    pub ssl: Option<bool>,
+    pub ssl: Option<String>,
+    pub index: Option<String>,
+    pub extra_config: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -36,6 +38,8 @@ pub struct SiteInfo {
     pub server_name: Option<String>,
     pub listen: Option<String>,
     pub enabled: bool,
+    pub proxy_pass: Option<String>,
+    pub ssl: bool,
 }
 
 #[derive(Serialize)]
@@ -50,6 +54,9 @@ const NGINX_PATHS: &[&str] = &[
     "./server/nginx/sbin/nginx",
     "/usr/sbin/nginx",
     "/usr/local/nginx/sbin/nginx",
+    "/usr/bin/openresty",
+    "/usr/local/openresty/nginx/sbin/nginx",
+    "/opt/openresty/nginx/sbin/nginx",
 ];
 
 async fn find_nginx() -> Option<String> {
@@ -82,9 +89,10 @@ async fn get_nginx_version(nginx_path: &str) -> Option<String> {
     let output = Command::new(nginx_path).arg("-v").output().await.ok()?;
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
     // nginx -v outputs to stderr: "nginx version: nginx/1.18.0"
-    if stderr.contains("nginx version:") {
-        let version = stderr.trim().to_string();
-        Some(version)
+    // nginx -v outputs: "nginx version: nginx/1.18.0"
+    // openresty -v outputs: "nginx version: openresty/1.21.4.2"
+    if stderr.contains("nginx version:") || stderr.contains("openresty") {
+        Some(stderr.trim().to_string())
     } else {
         None
     }
@@ -151,23 +159,28 @@ pub async fn get_webserver_status(_: AuthUser) -> HttpResponse {
         (None, String::from("nginx not found"))
     };
 
-    // Check if nginx service is running
+    // Check if nginx/openresty service is running
     let running = if installed {
-        let output = Command::new("systemctl")
-            .args(["is-active", "nginx"])
-            .output()
-            .await;
-        match output {
-            Ok(output) => {
+        // Try systemctl for nginx first, then openresty, then check process
+        let services = ["nginx", "openresty"];
+        let mut active = false;
+        for svc in &services {
+            if let Ok(output) = Command::new("systemctl")
+                .args(["is-active", svc])
+                .output()
+                .await
+            {
                 let stdout = String::from_utf8_lossy(&output.stdout);
-                stdout.trim() == "active"
+                if stdout.trim() == "active" {
+                    active = true;
+                    break;
+                }
             }
-            Err(_) => false,
         }
+        active
     } else {
         false
     };
-
     HttpResponse::Ok().json(ResponseStructure {
         success: true,
         code: 200,
@@ -205,13 +218,15 @@ pub async fn list_nginx_sites(_: AuthUser) -> HttpResponse {
                             .and_then(|s| s.to_str())
                             .unwrap_or("")
                             .to_string();
-                        let (server_name, listen) = parse_nginx_config(&path).await;
+                        let (server_name, listen, proxy_pass, ssl) = parse_nginx_config(&path).await;
                         sites.push(SiteInfo {
                             name,
                             path: path.to_string_lossy().to_string(),
                             server_name,
                             listen,
                             enabled: true,
+                            proxy_pass,
+                            ssl,
                         });
                     }
                 }
@@ -225,14 +240,22 @@ pub async fn list_nginx_sites(_: AuthUser) -> HttpResponse {
             }
         }
     } else {
-        // System nginx: scan /etc/nginx/conf.d/ and /etc/nginx/sites-enabled/
-        let dirs = ["/etc/nginx/conf.d/", "/etc/nginx/sites-enabled/"];
+        // System nginx/openresty: scan common config directories
+        let dirs = [
+            "/etc/nginx/conf.d/",
+            "/etc/nginx/sites-enabled/",
+            "/etc/openresty/conf.d/",
+            "/etc/openresty/sites-enabled/",
+            "/usr/local/openresty/nginx/conf/",
+        ];
 
-        // Collect paths in sites-enabled for enabled check
         let mut enabled_paths: Vec<std::path::PathBuf> = Vec::new();
-        if let Ok(mut entries) = fs::read_dir("/etc/nginx/sites-enabled/").await {
-            while let Ok(Some(entry)) = entries.next_entry().await {
-                enabled_paths.push(entry.path());
+        let enabled_dirs = ["/etc/nginx/sites-enabled/", "/etc/openresty/sites-enabled/"];
+        for enabled_dir in &enabled_dirs {
+            if let Ok(mut entries) = fs::read_dir(enabled_dir).await {
+                while let Ok(Some(entry)) = entries.next_entry().await {
+                    enabled_paths.push(entry.path());
+                }
             }
         }
 
@@ -249,7 +272,7 @@ pub async fn list_nginx_sites(_: AuthUser) -> HttpResponse {
                                 .and_then(|s| s.to_str())
                                 .unwrap_or("")
                                 .to_string();
-                            let (server_name, listen) = parse_nginx_config(&path).await;
+                            let (server_name, listen, proxy_pass, ssl) = parse_nginx_config(&path).await;
                             let enabled = enabled_paths.iter().any(|p| *p == path)
                                 || path.starts_with("/etc/nginx/sites-enabled/");
                             sites.push(SiteInfo {
@@ -258,6 +281,8 @@ pub async fn list_nginx_sites(_: AuthUser) -> HttpResponse {
                                 server_name,
                                 listen,
                                 enabled,
+                                proxy_pass,
+                                ssl,
                             });
                         }
                     }
@@ -277,10 +302,12 @@ pub async fn list_nginx_sites(_: AuthUser) -> HttpResponse {
     })
 }
 
-async fn parse_nginx_config(path: &std::path::Path) -> (Option<String>, Option<String>) {
+async fn parse_nginx_config(path: &std::path::Path) -> (Option<String>, Option<String>, Option<String>, bool) {
     let content = fs::read_to_string(path).await.unwrap_or_default();
     let mut server_name: Option<String> = None;
     let mut listen: Option<String> = None;
+    let mut proxy_pass: Option<String> = None;
+    let mut ssl = false;
 
     for line in content.lines() {
         let trimmed = line.trim();
@@ -295,7 +322,6 @@ async fn parse_nginx_config(path: &std::path::Path) -> (Option<String>, Option<S
             if let Some(val) = trimmed.strip_prefix("server_name") {
                 let val = val.trim().trim_end_matches(';').trim();
                 if !val.is_empty() {
-                    // Take the first server_name value if multiple
                     server_name = Some(val.split_whitespace().next().unwrap_or(val).to_string());
                 }
             }
@@ -306,18 +332,26 @@ async fn parse_nginx_config(path: &std::path::Path) -> (Option<String>, Option<S
             if let Some(val) = trimmed.strip_prefix("listen") {
                 let val = val.trim().trim_end_matches(';').trim();
                 if !val.is_empty() {
+                    if val.contains("ssl") {
+                        ssl = true;
+                    }
                     listen = Some(val.to_string());
                 }
             }
         }
 
-        // Stop if we found both
-        if server_name.is_some() && listen.is_some() {
-            break;
+        // Parse proxy_pass
+        if proxy_pass.is_none() {
+            if let Some(val) = trimmed.strip_prefix("proxy_pass") {
+                let val = val.trim().trim_end_matches(';').trim();
+                if !val.is_empty() && val.starts_with("http") {
+                    proxy_pass = Some(val.to_string());
+                }
+            }
         }
     }
 
-    (server_name, listen)
+    (server_name, listen, proxy_pass, ssl)
 }
 
 pub async fn create_nginx_site(
@@ -344,23 +378,37 @@ pub async fn create_nginx_site(
     };
 
     let listen_port = body.listen.unwrap_or(80);
-    let ssl = body.ssl.unwrap_or(false);
+    let ssl_type = body.ssl.as_deref().unwrap_or("");
 
     let mut config = String::new();
     config.push_str("server {\n");
 
-    if ssl {
-        config.push_str(&format!("    listen {} ssl;\n", listen_port));
-        config.push_str(&format!(
-            "    ssl_certificate /etc/nginx/ssl/{}.crt;\n",
-            body.server_name
-        ));
-        config.push_str(&format!(
-            "    ssl_certificate_key /etc/nginx/ssl/{}.key;\n",
-            body.server_name
-        ));
-    } else {
-        config.push_str(&format!("    listen {};\n", listen_port));
+    match ssl_type {
+        "letsencrypt" => {
+            config.push_str(&format!("    listen {} ssl;\n", listen_port));
+            config.push_str(&format!(
+                "    ssl_certificate /etc/letsencrypt/live/{}/fullchain.pem;\n",
+                body.server_name
+            ));
+            config.push_str(&format!(
+                "    ssl_certificate_key /etc/letsencrypt/live/{}/privkey.pem;\n",
+                body.server_name
+            ));
+        }
+        "custom" => {
+            config.push_str(&format!("    listen {} ssl;\n", listen_port));
+            config.push_str(&format!(
+                "    ssl_certificate /etc/nginx/ssl/{}.crt;\n",
+                body.server_name
+            ));
+            config.push_str(&format!(
+                "    ssl_certificate_key /etc/nginx/ssl/{}.key;\n",
+                body.server_name
+            ));
+        }
+        _ => {
+            config.push_str(&format!("    listen {};\n", listen_port));
+        }
     }
 
     config.push_str(&format!("    server_name {};\n", body.server_name));
@@ -370,9 +418,19 @@ pub async fn create_nginx_site(
             "    location / {{\n        proxy_pass {};\n        proxy_set_header Host $host;\n        proxy_set_header X-Real-IP $remote_addr;\n        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n        proxy_set_header X-Forwarded-Proto $scheme;\n    }}\n",
             proxy_pass
         ));
-    } else {
-        config.push_str(&format!("    root {};\n", body.root));
-        config.push_str("    index index.html index.htm;\n");
+    } else if let Some(ref root) = body.root {
+        config.push_str(&format!("    root {};\n", root));
+        let index_files = body.index.as_deref().unwrap_or("index.html index.htm");
+        config.push_str(&format!("    index {};\n", index_files));
+    }
+
+    if let Some(ref extra) = body.extra_config {
+        if !extra.trim().is_empty() {
+            config.push_str(extra);
+            if !extra.ends_with('\n') {
+                config.push('\n');
+            }
+        }
     }
 
     config.push_str("}\n");
@@ -549,6 +607,131 @@ pub async fn delete_nginx_site(
             })),
         }),
     }
+}
+
+pub async fn enable_nginx_site(
+    _: AuthUser,
+    path: web::Path<NginxSitePath>,
+) -> HttpResponse {
+    if !is_linux() {
+        return HttpResponse::BadRequest().json(ResponseStructureError {
+            success: false,
+            code: 400,
+            message: String::from("Web server management is only supported on Linux"),
+        });
+    }
+
+    let name = &path.name;
+    let sites_available = "/etc/nginx/sites-available/";
+    let sites_enabled = "/etc/nginx/sites-enabled/";
+
+    // Check if source config exists
+    let conf_path = format!("{}{}", sites_available, name);
+    let conf_path_dot = format!("{}{}.conf", sites_available, name);
+    let source = if fs::metadata(&conf_path).await.is_ok() {
+        conf_path
+    } else if fs::metadata(&conf_path_dot).await.is_ok() {
+        conf_path_dot
+    } else {
+        // Also check conf.d
+        let conf_d_path = format!("/etc/nginx/conf.d/{}", name);
+        let conf_d_path_dot = format!("/etc/nginx/conf.d/{}.conf", name);
+        if fs::metadata(&conf_d_path).await.is_ok() {
+            conf_d_path
+        } else if fs::metadata(&conf_d_path_dot).await.is_ok() {
+            conf_d_path_dot
+        } else {
+            return HttpResponse::NotFound().json(ResponseStructureError {
+                success: false,
+                code: 404,
+                message: format!("Site '{}' not found", name),
+            });
+        }
+    };
+
+    // Create symlink in sites-enabled
+    if let Err(err) = fs::create_dir_all(sites_enabled).await {
+        return HttpResponse::InternalServerError().json(ResponseStructureError {
+            success: false,
+            code: 500,
+            message: format!("Failed to create sites-enabled directory: {}", err),
+        });
+    }
+
+    let link_name = format!("{}{}", sites_enabled, source.rsplit('/').next().unwrap_or(name));
+    // Remove existing link if any, then create
+    let _ = fs::remove_file(&link_name).await;
+    if let Err(err) = std::os::unix::fs::symlink(&source, &link_name) {
+        return HttpResponse::InternalServerError().json(ResponseStructureError {
+            success: false,
+            code: 500,
+            message: format!("Failed to enable site: {}", err),
+        });
+    }
+
+    // Reload nginx
+    if let Some(nginx_path) = find_nginx().await {
+        let _ = reload_nginx_internal(&nginx_path).await;
+    }
+
+    HttpResponse::Ok().json(ResponseStructure::<()> {
+        success: true,
+        code: 200,
+        message: String::from("success"),
+        data: None,
+    })
+}
+
+pub async fn disable_nginx_site(
+    _: AuthUser,
+    path: web::Path<NginxSitePath>,
+) -> HttpResponse {
+    if !is_linux() {
+        return HttpResponse::BadRequest().json(ResponseStructureError {
+            success: false,
+            code: 400,
+            message: String::from("Web server management is only supported on Linux"),
+        });
+    }
+
+    let name = &path.name;
+    let sites_enabled = "/etc/nginx/sites-enabled/";
+
+    // Remove from sites-enabled
+    let link_path = format!("{}{}", sites_enabled, name);
+    let link_path_conf = format!("{}{}.conf", sites_enabled, name);
+
+    let mut removed = false;
+    if fs::metadata(&link_path).await.is_ok() {
+        if fs::remove_file(&link_path).await.is_ok() {
+            removed = true;
+        }
+    }
+    if !removed && fs::metadata(&link_path_conf).await.is_ok() {
+        if fs::remove_file(&link_path_conf).await.is_ok() {
+            removed = true;
+        }
+    }
+
+    if !removed {
+        return HttpResponse::NotFound().json(ResponseStructureError {
+            success: false,
+            code: 404,
+            message: format!("Site '{}' is not enabled or not found", name),
+        });
+    }
+
+    // Reload nginx
+    if let Some(nginx_path) = find_nginx().await {
+        let _ = reload_nginx_internal(&nginx_path).await;
+    }
+
+    HttpResponse::Ok().json(ResponseStructure::<()> {
+        success: true,
+        code: 200,
+        message: String::from("success"),
+        data: None,
+    })
 }
 
 pub async fn reload_nginx(_: AuthUser) -> HttpResponse {
