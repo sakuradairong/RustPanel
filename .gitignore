@@ -14,3 +14,6 @@
 /server/safe/*
 *.pidnode_modules/
 public/app_full.js
+panel.pid
+runtime/
+*.bak
