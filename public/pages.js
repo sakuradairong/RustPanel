@@ -1697,6 +1697,7 @@ async function renderWebServerSslIssue(tc,providers){
 }
 
 
+
 // ── SSL Upload Certificate ──
 function renderWebServerSslUpload(tc){
   tc.innerHTML=`
@@ -1770,7 +1771,6 @@ function renderWebServerSslSelfSigned(tc){
   });
 }
 
-}
 
 // ── Firewall ──
 async function renderFirewall(){
@@ -2031,3 +2031,5 @@ async function renderInstaller(){
   }catch(e){
     if(e.message!=='Unauthorized')document.getElementById('installer-list').innerHTML='<div class="error-msg">Error: '+e.message+'</div>';
   }
+
+}
