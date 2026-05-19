@@ -290,8 +290,8 @@ async function renderDashboard(){
 
     // Open SSE for live CPU/Memory/Swap/Network updates
     const token=getToken();
-    const es=new EventSource('/api/v1/monitor?token='+encodeURIComponent(token));
-    es.onmessage=function(ev){
+    dashboardEventSource = new EventSource('/api/v1/monitor?token='+encodeURIComponent(token));
+    dashboardEventSource.onmessage=function(ev){
       try{
         const s=JSON.parse(ev.data);
         const cpuGlobal=s.cpu||0;
@@ -357,7 +357,7 @@ async function renderDashboard(){
         }
       }catch(e){/* ignore parse errors */ }
     };
-    es.onerror=function(){/* SSE connection will auto-reconnect */};
+    dashboardEventSource.onerror=function(){/* SSE connection will auto-reconnect */};
   }catch(e){
     if(e.message!=='Unauthorized')document.getElementById('ds-cpu-cores').textContent='Error: '+e.message;
   }
@@ -365,6 +365,7 @@ async function renderDashboard(){
 
 function formatSize(bytes){
   if(bytes===0)return '0 B';
+  if(bytes<0)return 'N/A';
   const units=['B','KB','MB','GB','TB'];
   const i=Math.floor(Math.log(bytes)/Math.log(1024));
   return (bytes/Math.pow(1024,i)).toFixed(i>0?1:0)+' '+units[i];

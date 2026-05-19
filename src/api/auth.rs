@@ -127,12 +127,12 @@ pub fn generate_jwt(subject: &str) -> Result<String, jsonwebtoken::errors::Error
                 Err(_) => 0,
             } + (CONF.app.session_ttl * 60 * 60) as u64) as usize,
         },
-        &EncodingKey::from_secret(USER_PASSWORD_KEY.as_ref()),
+        &EncodingKey::from_secret(USER_PASSWORD_KEY.as_bytes()),
     )?)
 }
 
 pub(crate) fn decode_jwt(token: &str) -> Result<Claims, jsonwebtoken::errors::Error> {
-    let key = DecodingKey::from_secret(USER_PASSWORD_KEY.as_ref());
+    let key = DecodingKey::from_secret(USER_PASSWORD_KEY.as_bytes());
 
     // 手动创建 Validation 实例，并设置所需的字段
     let mut validation = Validation::default();

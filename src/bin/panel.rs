@@ -152,7 +152,7 @@ async fn main() -> std::io::Result<()> {
             .wrap(
                 SessionMiddleware::builder(
                     CookieSessionStore::default(),
-                    Key::from(SESSION_KEY),
+                    Key::from(&SESSION_KEY[..]),
                     //Key::generate()
                 )
                 .session_lifecycle(PersistentSession::default().session_ttl(Duration::hours(CONF.app.session_ttl)))

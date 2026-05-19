@@ -80,11 +80,7 @@ fn validate_authority(authority: &str) -> bool {
 
 fn require_admin(user: &AuthUser) -> Result<(), HttpResponse> {
     if user.authority != "admin" {
-        return Err(HttpResponse::Forbidden().json(ResponseStructureError {
-            success: false,
-            code: 403,
-            message: String::from("Admin privileges required"),
-        }));
+        return Err(ResponseStructureError::forbidden("Admin privileges required"));
     }
     Ok(())
 }
