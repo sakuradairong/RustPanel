@@ -230,17 +230,17 @@ async function renderDashboard(){
   // Skeletons rendersıs
   c.innerHTML=`
   <div class="card-grid card-grid-4 mb-4" id="ds-stats">
-    <div class="card stat-card"><div class="label">CPU Usage</div><div class="value" style="color:var(--text-dim);font-size:1rem">...</div><div class="sub-value">loading</div></div>
-    <div class="card stat-card"><div class="label">Memory</div><div class="value" style="color:var(--text-dim);font-size:1rem">...</div><div class="sub-value">loading</div></div>
-    <div class="card stat-card"><div class="label">Swap</div><div class="value" style="color:var(--text-dim);font-size:1rem">...</div><div class="sub-value">loading</div></div>
-    <div class="card stat-card"><div class="label">Kernel</div><div class="value" style="color:var(--text-dim);font-size:1rem">...</div><div class="sub-value">loading</div></div>
+    <div class="card stat-card"><div class="label" style="font-size:.72rem;text-transform:uppercase">CPU Usage</div><div class="skeleton skeleton-card" style="height:45px;margin-top:8px"></div></div>
+    <div class="card stat-card"><div class="label" style="font-size:.72rem;text-transform:uppercase">Memory</div><div class="skeleton skeleton-card" style="height:45px;margin-top:8px"></div></div>
+    <div class="card stat-card"><div class="label" style="font-size:.72rem;text-transform:uppercase">Swap</div><div class="skeleton skeleton-card" style="height:45px;margin-top:8px"></div></div>
+    <div class="card stat-card"><div class="label" style="font-size:.72rem;text-transform:uppercase">Kernel</div><div class="skeleton skeleton-card" style="height:45px;margin-top:8px"></div></div>
   </div>
   <div class="card-grid card-grid-2">
-    <div class="card"><h3 style="font-size:0.95rem;margin-bottom:.75rem;color:var(--text-muted)">CPU Usage</h3><div id="ds-cpu-cores" style="text-align:center;padding:1rem;color:var(--text-dim)">Loading...</div></div>
-    <div class="card"><h3 style="font-size:0.95rem;margin-bottom:.75rem;color:var(--text-muted)">Memory Usage</h3><div id="ds-memory" style="text-align:center;padding:1rem;color:var(--text-dim)">Loading...</div></div>
+    <div class="card"><h3 class="label" style="font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;font-weight:700;color:var(--text-dim);margin-bottom:.8rem">CPU Usage</h3><div id="ds-cpu-cores"><div class="skeleton skeleton-text"></div><div class="skeleton skeleton-text" style="width:50%"></div></div></div>
+    <div class="card"><h3 class="label" style="font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;font-weight:700;color:var(--text-dim);margin-bottom:.8rem">Memory Usage</h3><div id="ds-memory"><div class="skeleton skeleton-text"></div><div class="skeleton skeleton-text" style="width:50%"></div></div></div>
   </div>
-  <div class="card mt-4"><h3 style="font-size:0.95rem;margin-bottom:.75rem;color:var(--text-muted)">Disk Usage</h3><div id="ds-disks" style="text-align:center;padding:1rem;color:var(--text-dim)">Loading...</div></div>
-  <div class="card mt-4"><h3 style="font-size:0.95rem;margin-bottom:.75rem;color:var(--text-muted)">Network Interfaces</h3><div id="ds-network" style="text-align:center;padding:1rem;color:var(--text-dim)">Loading...</div></div>`;
+  <div class="card mt-4"><h3 class="label" style="font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;font-weight:700;color:var(--text-dim);margin-bottom:.8rem">Disk Usage</h3><div id="ds-disks"><div class="skeleton skeleton-text"></div><div class="skeleton skeleton-text"></div></div></div>
+  <div class="card mt-4"><h3 class="label" style="font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;font-weight:700;color:var(--text-dim);margin-bottom:.8rem">Network Interfaces</h3><div id="ds-network"><div class="skeleton skeleton-text"></div></div></div>`;
 
   try{
     // Initial load: static OS info + disk layout
@@ -309,9 +309,9 @@ async function renderDashboard(){
         const stats=document.getElementById('ds-stats');
         if(stats){
           const cards=stats.querySelectorAll('.card.stat-card');
-          cards[0].innerHTML='<div class="label">CPU Usage</div><div class="value" style="color:'+cpuColor+'">'+cpuGlobal.toFixed(1)+'%</div><div class="sub-value">'+coreCount+' cores</div>';
-          cards[1].innerHTML='<div class="label">Memory</div><div class="value" style="color:'+memColor+'">'+memPct+'%</div><div class="sub-value">'+formatSize(memUsed)+' / '+formatSize(memTotal)+'</div>';
-          cards[2].innerHTML='<div class="label">Swap</div><div class="value" style="color:'+swColor+'">'+swPct+'%</div><div class="sub-value">'+formatSize(swUsed)+' / '+formatSize(swTotal)+'</div>';
+          cards[0].innerHTML='<div class="stat-card-value">'+cpuGlobal.toFixed(1)+'%</div><div class="stat-card-sub">'+coreCount+' cores</div>';
+          cards[1].innerHTML='<div class="stat-card-value">'+memPct+'%</div><div class="stat-card-sub">'+formatSize(memUsed)+' / '+formatSize(memTotal)+'</div>';
+          cards[2].innerHTML='<div class="stat-card-value">'+swPct+'%</div><div class="stat-card-sub">'+formatSize(swUsed)+' / '+formatSize(swTotal)+'</div>';
         }
 
         // CPU bar
