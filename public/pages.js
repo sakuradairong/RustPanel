@@ -515,16 +515,16 @@ function renderUserTable(c,users){
   html+=`</tbody></table></div></div>`;
   c.innerHTML=html;
 
-  document.getElementById('create-user-btn').addEventListener('click',()=>showUserModal(null,users,renderUserTable.bind(null,c)));
+  document.getElementById('create-user-btn').addEventListener('click',()=>showUserModal(null,users,renderUserManagement));
   c.querySelectorAll('.edit-user-btn').forEach(btn=>{
     btn.addEventListener('click',()=>{
       const id=parseInt(btn.dataset.id);
       const user=users.find(u=>u.id===id);
-      if(user)showUserModal(user,users,renderUserTable.bind(null,c));
+      if(user)showUserModal(user,users,renderUserManagement);
     });
   });
   c.querySelectorAll('.delete-user-btn').forEach(btn=>{
-    btn.addEventListener('click',()=>showDeleteConfirm(btn.dataset.id,btn.dataset.username,renderUserTable.bind(null,c)));
+    btn.addEventListener('click',()=>showDeleteConfirm(btn.dataset.id,btn.dataset.username,renderUserManagement));
   });
   c.querySelectorAll('.reset-pwd-btn').forEach(btn=>{
     btn.addEventListener('click',()=>resetPassword(btn.dataset.id));
