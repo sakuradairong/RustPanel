@@ -28,7 +28,14 @@ function layout(pageFn,route){
   $app.innerHTML='<div id="sidebar"></div><div id="sidebar-overlay"></div><div id="main"><div id="topbar"></div><div id="content"></div></div>';
   renderSidebar(route);
   renderTopbar(route);
+  document.getElementById('sidebar-overlay')?.addEventListener('click',closeSidebar);
   pageFn(route);
+}
+
+// Collapse the mobile sidebar + its overlay (no-op on desktop where it's static).
+function closeSidebar(){
+  document.getElementById('sidebar')?.classList.remove('open');
+  document.getElementById('sidebar-overlay')?.classList.remove('show');
 }
 
 // ── Sidebar ──
@@ -92,7 +99,7 @@ function renderSidebar(activeRoute){
     }
     nav.innerHTML=html;
     sb.querySelectorAll('.nav-item[data-route]').forEach(el=>{
-      el.addEventListener('click',()=>navigate(el.dataset.route));
+      el.addEventListener('click',()=>{navigate(el.dataset.route);closeSidebar()});
     });
     sb.querySelectorAll('.group-title').forEach(el=>{
       el.addEventListener('click',function(){
@@ -135,8 +142,16 @@ function renderTopbar(route){
   const baseRoute=route.split('?')[0];
   let title=pageNames[baseRoute]||'RustPanel';
   if(baseRoute.startsWith('/file/view'))title='File Viewer';
-  tb.innerHTML=`<button id="sidebar-toggle" aria-label="Menu">☰</button><span class="page-title">${title}</span><div class="user-info"><span class="username">${userInfo.username||'User'}</span><button class="logout-btn" id="logout-btn">Logout</button></div>`;
-  document.getElementById('logout-btn')?.addEventListener('click',()=>{clearToken();cachedMenus=null;navigate('/login')});
+  const uname=userInfo.username||'User';
+  tb.innerHTML=`<button id="sidebar-toggle" aria-label="Menu">☰</button><span class="page-title">${escapeHtml(title)}</span><div class="user-info"><span class="avatar" aria-hidden="true">${escapeHtml(initials(uname))}</span><span class="username">${escapeHtml(uname)}</span><button class="logout-btn" id="logout-btn"><span class="icon" aria-hidden="true">⎋</span>Logout</button></div>`;
+  document.getElementById('logout-btn')?.addEventListener('click',()=>{
+    confirmDialog({
+      title:'Sign Out',
+      message:'Are you sure you want to sign out?',
+      okText:'Sign Out',okClass:'btn-danger',
+      onConfirm:()=>{clearToken();cachedMenus=null;navigate('/login')}
+    });
+  });
   document.getElementById('sidebar-toggle')?.addEventListener('click',()=>{
     const sb=document.getElementById('sidebar');
     if(sb)sb.classList.toggle('open');
@@ -159,7 +174,10 @@ function renderLogin(){
       </div>
       <div class="field">
         <label for="login-password">Password</label>
-        <input type="password" id="login-password" autocomplete="current-password" placeholder="Enter password">
+        <div class="pw-field">
+          <input type="password" id="login-password" autocomplete="current-password" placeholder="Enter password">
+          <button type="button" class="pw-toggle" id="login-pw-toggle" aria-label="Show password">👁</button>
+        </div>
       </div>
       <button class="btn login-btn" id="login-btn">Sign In</button>
       <div class="loading-bar" id="login-loading"></div>
@@ -172,10 +190,25 @@ function renderLogin(){
   const btn=document.getElementById('login-btn');
   const unEl=document.getElementById('login-username');
   const pwEl=document.getElementById('login-password');
+  const pwToggle=document.getElementById('login-pw-toggle');
   const loadingEl=document.getElementById('login-loading');
 
   function showErr(msg){errEl.textContent=msg;errEl.classList.add('show')}
   function hideErr(){errEl.classList.remove('show')}
+
+  // Show/hide password
+  pwToggle?.addEventListener('click',()=>{
+    const reveal=pwEl.type==='password';
+    pwEl.type=reveal?'text':'password';
+    pwToggle.textContent=reveal?'🙈':'👁';
+    pwToggle.setAttribute('aria-label',reveal?'Hide password':'Show password');
+    pwEl.focus();
+  });
+
+  // Remember the last username and focus the most useful field.
+  const lastUser=localStorage.getItem('lastUsername')||'';
+  if(lastUser){unEl.value=lastUser;setTimeout(()=>pwEl.focus(),0)}
+  else setTimeout(()=>unEl.focus(),0);
 
   async function doLogin(){
     hideErr();
@@ -198,6 +231,7 @@ function renderLogin(){
       if(j.success&&j.data&&j.data.token){
         setToken(j.data.token);
         if(j.data.user)localStorage.setItem('user',JSON.stringify(j.data.user));
+        localStorage.setItem('lastUsername',username);
         cachedMenus=null;
         navigate('/home');
       } else {
@@ -210,12 +244,14 @@ function renderLogin(){
     }catch(e){
       if(e.message==='Unauthorized')return;
       showErr('Connection error: '+e.message);
+      showToast('Connection error: '+e.message,'error');
     }finally{
       btn.disabled=false;btn.textContent='Sign In';loadingEl.classList.remove('show');
     }
   }
 
   btn.addEventListener('click',doLogin);
+  unEl.addEventListener('keydown',e=>{if(e.key==='Enter')doLogin()});
   pwEl.addEventListener('keydown',e=>{if(e.key==='Enter')doLogin()});
 }
 

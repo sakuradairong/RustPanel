@@ -532,11 +532,8 @@ function renderUserTable(c,users){
 }
 
 function showUserModal(user,users,refreshFn){
-  const overlay=document.createElement('div');
-  overlay.className='modal-overlay';
   const isEdit=!!user;
-  overlay.innerHTML=`
-  <div class="modal">
+  const m=openModal(`
     <h3>${isEdit?'Edit User':'Create User'}</h3>
     <div class="field">
       <label>Username</label>
@@ -556,25 +553,21 @@ function showUserModal(user,users,refreshFn){
     </div>
     <div id="modal-error" class="error-msg" style="display:none"></div>
     <div class="btn-row">
-      <button class="btn btn-sm" id="modal-cancel-btn">Cancel</button>
+      <button class="btn btn-sm btn-ghost" id="modal-cancel-btn">Cancel</button>
       <button class="btn btn-sm btn-success" id="modal-save-btn">${isEdit?'Save':'Create'}</button>
-    </div>
-  </div>`;
-  document.body.appendChild(overlay);
+    </div>`);
+  const close=m.close;
+  m.root.querySelector('#modal-cancel-btn').addEventListener('click',close);
 
-  function close(){overlay.remove()}
-  document.getElementById('modal-cancel-btn').addEventListener('click',close);
-  overlay.addEventListener('click',e=>{if(e.target===overlay)close()});
-
-  document.getElementById('modal-save-btn').addEventListener('click',async()=>{
-    const username=document.getElementById('modal-username').value.trim();
-    const password=document.getElementById('modal-password').value;
-    const authority=document.getElementById('modal-authority').value;
-    const errEl=document.getElementById('modal-error');
+  m.root.querySelector('#modal-save-btn').addEventListener('click',async()=>{
+    const username=m.root.querySelector('#modal-username').value.trim();
+    const password=m.root.querySelector('#modal-password').value;
+    const authority=m.root.querySelector('#modal-authority').value;
+    const errEl=m.root.querySelector('#modal-error');
     if(!username){errEl.textContent='Username is required';errEl.style.display='block';return}
     if(!isEdit&&!password){errEl.textContent='Password is required';errEl.style.display='block';return}
     errEl.style.display='none';
-    const btn=document.getElementById('modal-save-btn');
+    const btn=m.root.querySelector('#modal-save-btn');
     btn.disabled=true;btn.textContent='Saving...';
     try{
       const body={username,password,authority};
@@ -603,94 +596,58 @@ function showUserModal(user,users,refreshFn){
 }
 
 function showDeleteConfirm(id,username,refreshFn){
-  const overlay=document.createElement('div');
-  overlay.className='modal-overlay';
-  overlay.innerHTML=`
-  <div class="modal" style="max-width:380px">
-    <h3>Confirm Delete</h3>
-    <p style="color:var(--text-muted);font-size:0.9rem;margin-bottom:1rem">Are you sure you want to delete user <strong>${escapeHtml(username)}</strong>?</p>
-    <div id="modal-error" class="error-msg" style="display:none"></div>
-    <div class="btn-row">
-      <button class="btn btn-sm" id="modal-cancel-btn">Cancel</button>
-      <button class="btn btn-sm btn-danger" id="modal-confirm-btn">Delete</button>
-    </div>
-  </div>`;
-  document.body.appendChild(overlay);
-
-  function close(){overlay.remove()}
-  document.getElementById('modal-cancel-btn').addEventListener('click',close);
-  overlay.addEventListener('click',e=>{if(e.target===overlay)close()});
-
-  document.getElementById('modal-confirm-btn').addEventListener('click',async()=>{
-    const btn=document.getElementById('modal-confirm-btn');
-    btn.disabled=true;btn.textContent='Deleting...';
-    try{
+  confirmDialog({
+    title:'Confirm Delete',
+    messageHtml:`Are you sure you want to delete user <strong>${escapeHtml(username)}</strong>?`,
+    okText:'Delete',danger:true,loadingText:'Deleting...',maxWidth:'380px',
+    onConfirm:async()=>{
       const r=await api('/admin/users/'+id,{method:'DELETE'});
-      if(r.success){
-        showToast('User deleted','success');
-        close();
-        if(refreshFn)refreshFn();
-      } else {
-        document.getElementById('modal-error').textContent=r.message||'Delete failed';
-        document.getElementById('modal-error').style.display='block';
-        btn.disabled=false;btn.textContent='Delete';
-      }
-    }catch(e){
-      if(e.message!=='Unauthorized'){
-        document.getElementById('modal-error').textContent='Error: '+e.message;
-        document.getElementById('modal-error').style.display='block';
-        btn.disabled=false;btn.textContent='Delete';
-      }
+      if(!r.success)throw new Error(r.message||'Delete failed');
+      showToast('User deleted','success');
+      if(refreshFn)refreshFn();
     }
   });
 }
 
 async function resetPassword(id){
-  const overlay=document.createElement('div');
-  overlay.className='modal-overlay';
-  overlay.innerHTML=`
-  <div class="modal" style="max-width:380px">
+  const m=openModal(`
     <h3>Reset Password</h3>
     <p style="color:var(--text-muted);font-size:0.9rem;margin-bottom:1rem">Generate a new password for this user?</p>
     <div id="modal-error" class="error-msg" style="display:none"></div>
     <div class="btn-row">
-      <button class="btn btn-sm" id="modal-cancel-btn">Cancel</button>
+      <button class="btn btn-sm btn-ghost" id="modal-cancel-btn">Cancel</button>
       <button class="btn btn-sm btn-warning" id="modal-reset-btn">Reset</button>
-    </div>
-  </div>`;
-  document.body.appendChild(overlay);
+    </div>`,{maxWidth:'380px'});
+  const close=m.close;
+  m.root.querySelector('#modal-cancel-btn').addEventListener('click',close);
 
-  function close(){overlay.remove()}
-  document.getElementById('modal-cancel-btn').addEventListener('click',close);
-  overlay.addEventListener('click',e=>{if(e.target===overlay)close()});
-
-  document.getElementById('modal-reset-btn').addEventListener('click',async()=>{
-    const btn=document.getElementById('modal-reset-btn');
+  m.root.querySelector('#modal-reset-btn').addEventListener('click',async()=>{
+    const btn=m.root.querySelector('#modal-reset-btn');
     btn.disabled=true;btn.textContent='Resetting...';
     try{
       const r=await api('/admin/users/'+id+'/reset-password',{method:'POST'});
       if(r.success&&r.data){
         const newPwd=r.data.password||'N/A';
-        overlay.innerHTML=`
-        <div class="modal" style="max-width:380px">
+        m.root.innerHTML=`
           <h3>Password Reset</h3>
           <p style="color:var(--text-muted);font-size:0.9rem;margin-bottom:.5rem">New password for this user:</p>
           <div style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:10px 14px;font-family:monospace;font-size:0.9rem;text-align:center;color:var(--primary);margin-bottom:1rem;user-select:all">${escapeHtml(newPwd)}</div>
           <p style="color:var(--text-dim);font-size:0.8rem">Please save this password. It cannot be retrieved later.</p>
           <div class="btn-row">
             <button class="btn btn-sm" id="modal-close-btn">Close</button>
-          </div>
-        </div>`;
-        document.getElementById('modal-close-btn').addEventListener('click',close);
+          </div>`;
+        m.root.querySelector('#modal-close-btn').addEventListener('click',close);
       } else {
-        document.getElementById('modal-error').textContent=r.message||'Reset failed';
-        document.getElementById('modal-error').style.display='block';
+        const errEl=m.root.querySelector('#modal-error');
+        errEl.textContent=r.message||'Reset failed';
+        errEl.style.display='block';
         btn.disabled=false;btn.textContent='Reset';
       }
     }catch(e){
       if(e.message!=='Unauthorized'){
-        document.getElementById('modal-error').textContent='Error: '+e.message;
-        document.getElementById('modal-error').style.display='block';
+        const errEl=m.root.querySelector('#modal-error');
+        errEl.textContent='Error: '+e.message;
+        errEl.style.display='block';
         btn.disabled=false;btn.textContent='Reset';
       }
     }
@@ -764,42 +721,17 @@ async function loadProcessList(){
 }
 
 function killProcess(pid,name){
-  const overlay=document.createElement('div');
-  overlay.className='modal-overlay';
-  overlay.innerHTML=`
-  <div class="modal" style="max-width:380px">
-    <h3>Kill Process</h3>
-    <p style="color:var(--text-muted);font-size:0.9rem;margin-bottom:1rem">Kill process PID ${pid} (<strong>${escapeHtml(name)}</strong>)?</p>
-    <div class="btn-row">
-      <button class="btn btn-sm" id="modal-cancel-btn">Cancel</button>
-      <button class="btn btn-sm btn-danger" id="modal-kill-btn">Kill</button>
-    </div>
-  </div>`;
-  document.body.appendChild(overlay);
-
-  function close(){overlay.remove()}
-  document.getElementById('modal-cancel-btn').addEventListener('click',close);
-  overlay.addEventListener('click',e=>{if(e.target===overlay)close()});
-
-  document.getElementById('modal-kill-btn').addEventListener('click',async()=>{
-    const btn=document.getElementById('modal-kill-btn');
-    btn.disabled=true;btn.textContent='Killing...';
-    try{
-      const r=await api('/process/kill/'+encodeURIComponent(pid),{
-        method:'POST'
-      });
+  confirmDialog({
+    title:'Kill Process',
+    messageHtml:`Kill process PID ${escapeHtml(String(pid))} (<strong>${escapeHtml(name)}</strong>)?`,
+    okText:'Kill',danger:true,loadingText:'Killing...',maxWidth:'380px',
+    onConfirm:async()=>{
+      const r=await api('/process/kill/'+encodeURIComponent(pid),{method:'POST'});
       if(r.success){
         showToast('Process killed','success');
-        close();
         loadProcessList();
       } else {
         showToast(r.message||'Kill failed','error');
-        close();
-      }
-    }catch(e){
-      if(e.message!=='Unauthorized'){
-        showToast('Error: '+e.message,'error');
-        close();
       }
     }
   });
