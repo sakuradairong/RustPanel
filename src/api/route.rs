@@ -109,6 +109,7 @@ pub fn v1() -> actix_web::Scope {
             .service(
                 web::scope("/installer")
                     .service(web::resource("/list").route(web::get().to(v1::installer::list_software)))
+                    .service(web::resource("/versions").route(web::get().to(v1::installer::list_versions)))
                     .service(web::resource("/install").route(web::post().to(v1::installer::install_software)))
                     .service(web::resource("/uninstall").route(web::post().to(v1::installer::uninstall_software)))
             )
