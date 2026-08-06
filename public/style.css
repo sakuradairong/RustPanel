@@ -249,6 +249,9 @@ td.clickable:hover{text-decoration:underline;color:var(--secondary)}
 .gauge-arc{fill:none;stroke:var(--primary);stroke-width:10;stroke-linecap:round;transition:stroke-dashoffset .6s cubic-bezier(.4,0,.2,1),stroke .3s}
 .gauge-center{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:1.5rem;font-weight:800;color:var(--text);font-variant-numeric:tabular-nums}
 .gauge-sub{margin-top:.6rem;font-size:.76rem;color:var(--text-muted);font-variant-numeric:tabular-nums;min-height:1em}
+.live-chart{width:100%;height:120px}
+.live-chart svg{width:100%;height:100%;display:block;overflow:visible}
+.lc-grid{stroke:var(--border);stroke-width:1;opacity:.45}
 
 /* ── A11y & polish (refactor) ── */
 :focus-visible{outline:2px solid var(--primary);outline-offset:2px}

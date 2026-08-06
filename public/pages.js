@@ -962,16 +962,17 @@ async function loadLogContent(filePath){
 }
 
 // ── Real-Time Monitor ──
-function renderMonitor(){
+let monitorCharts=null;
+async function renderMonitor(){
   const c=document.getElementById('content');
   if(!c)return;
 
   c.innerHTML=`
   <div class="flex justify-between items-center mb-4">
     <h2 style="font-size:1.1rem;font-weight:600">Real-Time Monitor</h2>
-    <span id="monitor-status" class="text-sm" style="color:var(--success)">● Connected</span>
+    <span id="monitor-status" class="text-sm" style="color:var(--text-dim)">● Connecting…</span>
   </div>
-  <div class="monitor-grid">
+  <div class="monitor-grid mb-4">
     <div class="card monitor-card">
       <div class="label">CPU Usage</div>
       <div class="value" id="monitor-cpu" style="color:var(--success)">0%</div>
@@ -989,11 +990,16 @@ function renderMonitor(){
     </div>
     <div class="card monitor-card">
       <div class="label">Uptime</div>
-      <div class="value" id="monitor-uptime" style="color:var(--text);font-size:1.25rem">0</div>
+      <div class="value" id="monitor-uptime" style="color:var(--text);font-size:1.25rem">—</div>
     </div>
   </div>
+  <div class="card-grid card-grid-3">
+    <div class="card"><h3 class="ds-h">CPU %</h3><div class="live-chart"><svg id="chart-cpu"></svg></div></div>
+    <div class="card"><h3 class="ds-h">Memory %</h3><div class="live-chart"><svg id="chart-mem"></svg></div></div>
+    <div class="card"><h3 class="ds-h">Load (1m)</h3><div class="live-chart"><svg id="chart-load"></svg></div></div>
+  </div>
   <div class="card mt-4">
-    <h3 style="font-size:0.95rem;margin-bottom:.75rem;color:var(--text-muted)">Network</h3>
+    <h3 class="ds-h">Network</h3>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem">
       <div>
         <div class="text-sm text-muted mb-2">Received</div>
@@ -1006,12 +1012,25 @@ function renderMonitor(){
     </div>
   </div>`;
 
+  // Uptime needs the boot time, which the SSE payload doesn't carry.
+  let bootTime=0;
+  try{const oj=await api('/os_info');if(oj&&oj.success&&oj.data&&oj.data.os)bootTime=Number(oj.data.os.boot_time)||0}catch(e){}
+
+  monitorCharts={
+    bootTime,
+    cpu:createLiveChart(document.getElementById('chart-cpu'),{max:100,series:[{key:'v',color:'var(--primary)'}]}),
+    mem:createLiveChart(document.getElementById('chart-mem'),{max:100,series:[{key:'v',color:'var(--secondary)'}]}),
+    load:createLiveChart(document.getElementById('chart-load'),{series:[{key:'v',color:'var(--warning)'}]})
+  };
+
   try{
     const token=getToken();
     const url=apiUrl('/monitor')+'?token='+encodeURIComponent(token||'');
     monitorEventSource=new EventSource(url);
 
     monitorEventSource.onmessage=function(e){
+      const statusEl=document.getElementById('monitor-status');
+      if(statusEl){statusEl.textContent='● Connected';statusEl.style.color='var(--success)'}
       try{
         const data=JSON.parse(e.data);
         updateMonitor(data);
@@ -1074,6 +1093,20 @@ function updateMonitor(data){
   if(netTx!==null){
     const txEl=document.getElementById('monitor-net-tx');
     if(txEl)txEl.textContent=formatSize(netTx)+'/s';
+  }
+
+  // Uptime (from boot time captured on page load)
+  if(monitorCharts&&monitorCharts.bootTime>0){
+    const upEl=document.getElementById('monitor-uptime');
+    if(upEl)upEl.textContent=formatUptime(Math.floor(Date.now()/1000)-monitorCharts.bootTime);
+  }
+
+  // Push rolling history into the live charts
+  if(monitorCharts){
+    if(cpu!==null)monitorCharts.cpu.push({v:cpu});
+    if(memUsed!==null&&memTotal){monitorCharts.mem.push({v:(memUsed/memTotal)*100})}
+    const load1=data.load&&data.load.one!=null?data.load.one:null;
+    if(load1!==null)monitorCharts.load.push({v:load1});
   }
 }
 

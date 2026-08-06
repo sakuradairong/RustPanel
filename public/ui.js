@@ -48,6 +48,67 @@ function openModal(innerHTML,opts){
 //   - resolve normally  -> dialog closes
 //   - resolve `true`     -> dialog stays open (e.g. validation failed)
 //   - throw an Error     -> message shown inline, dialog stays open
+// Lightweight, dependency-free rolling SVG line chart for live metrics.
+// svg: an <svg> element. opts: { capacity, max (fixed) or null for auto,
+//   series: [{ key, color }] }. Returns { push(valuesByKey) }.
+function createLiveChart(svg,opts){
+  opts=opts||{};
+  const cap=opts.capacity||60;
+  const series=opts.series||[{key:'v',color:'var(--primary)'}];
+  const fixedMax=opts.max||null;
+  const NS='http://www.w3.org/2000/svg';
+  const buffers={};
+  series.forEach(s=>{buffers[s.key]=[]});
+  svg.setAttribute('viewBox','0 0 100 100');
+  svg.setAttribute('preserveAspectRatio','none');
+  svg.innerHTML='';
+  [25,50,75].forEach(y=>{
+    const l=document.createElementNS(NS,'line');
+    l.setAttribute('x1',0);l.setAttribute('x2',100);l.setAttribute('y1',y);l.setAttribute('y2',y);
+    l.setAttribute('class','lc-grid');l.setAttribute('vector-effect','non-scaling-stroke');
+    svg.appendChild(l);
+  });
+  const parts={};
+  series.forEach(s=>{
+    const area=document.createElementNS(NS,'path');
+    area.setAttribute('fill',s.color);area.setAttribute('opacity','0.10');area.setAttribute('stroke','none');
+    svg.appendChild(area);
+    const line=document.createElementNS(NS,'polyline');
+    line.setAttribute('fill','none');line.setAttribute('stroke',s.color);line.setAttribute('stroke-width','1.6');
+    line.setAttribute('vector-effect','non-scaling-stroke');line.setAttribute('stroke-linejoin','round');line.setAttribute('stroke-linecap','round');
+    svg.appendChild(line);
+    parts[s.key]={line,area};
+  });
+  const step=cap>1?100/(cap-1):0;
+  function redraw(){
+    let max=fixedMax;
+    if(!max){max=1;series.forEach(s=>buffers[s.key].forEach(v=>{if(v>max)max=v}));max*=1.25}
+    series.forEach(s=>{
+      const buf=buffers[s.key];
+      const n=buf.length;
+      const pts=[];
+      for(let i=0;i<n;i++){
+        const x=100-(n-1-i)*step;
+        const y=100-Math.max(0,Math.min(100,(buf[i]/max)*100));
+        pts.push(x.toFixed(2)+','+y.toFixed(2));
+      }
+      parts[s.key].line.setAttribute('points',pts.join(' '));
+      if(n>0){
+        const x0=(100-(n-1)*step).toFixed(2);
+        parts[s.key].area.setAttribute('d','M'+x0+',100 L'+pts.join(' L')+' L100,100 Z');
+      } else {
+        parts[s.key].area.removeAttribute('d');
+      }
+    });
+  }
+  return {
+    push(vals){
+      series.forEach(s=>{const b=buffers[s.key];b.push(Number(vals[s.key])||0);if(b.length>cap)b.shift()});
+      redraw();
+    }
+  };
+}
+
 function confirmDialog(opts){
   opts=opts||{};
   const okText=opts.okText||'Confirm';
