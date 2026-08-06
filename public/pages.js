@@ -99,6 +99,9 @@ async function renderDockerTab(){
 }
 
 // ── Containers ──
+let dcFilterQ='';
+let dcFilterState='all'; // all | running | exited | other
+
 async function renderDockerContainers(dc){
   dc.innerHTML='<div style="text-align:center;padding:2rem;color:var(--text-dim)">Loading...</div>';
   try{
@@ -106,98 +109,170 @@ async function renderDockerContainers(dc){
     if(!j.success){dc.innerHTML='<div class="error-msg">Failed</div>';return}
     const list=j.data||[];
     if(!Array.isArray(list)){dc.innerHTML='<div class="error-msg">Invalid data</div>';return}
-    let html='<div class="flex justify-between items-center mb-3"><span style="font-size:0.85rem;color:var(--text-dim)">'+list.length+' container(s)</span><div><button class="btn btn-sm btn-success" id="dc-create-btn">+ Create</button><button class="btn btn-sm btn-ghost" id="dc-refresh" style="margin-left:4px">⟳ Refresh</button></div></div>';
-    if(list.length===0){
-      html+='<div class="empty-state"><div class="icon">🐳</div><div>No containers yet</div></div>';
-      dc.innerHTML=html;
-      document.getElementById('dc-refresh').onclick=()=>renderDockerContainers(dc);
-      document.getElementById('dc-create-btn').onclick=()=>renderDockerCreate(dc);
-      return;
-    }
-    html+='<div class="dk-grid">';
-    list.forEach(ct=>{
-      const shortId=(ct.id||'').substring(0,12);
-      const st=ct.state||'';
-      const sc=st.toLowerCase();
-      const ports=Array.isArray(ct.ports)?ct.ports.join(', '):(ct.ports||'');
-      const nm=(ct.name||'').replace(/^\//,'');
-      const run=st==='running';const paused=st==='paused';
-      html+=`<div class="dk-card">
-        <div class="dk-card-head">
-          <div class="dk-name" title="${escapeHtml(nm)}">${escapeHtml(nm||shortId)}</div>
-          <span class="status-badge ${sc}">${escapeHtml(st)}</span>
+
+    const runningN=list.filter(c=>(c.state||'').toLowerCase()==='running').length;
+    dc.innerHTML=`<div class="dk-toolbar">
+      <div class="dk-toolbar-left">
+        <input type="search" class="dk-search" id="dc-search" placeholder="Search name / image / port…" value="${escapeHtml(dcFilterQ)}" autocomplete="off">
+        <div class="dk-chips" id="dc-chips">
+          <button type="button" class="dk-chip${dcFilterState==='all'?' active':''}" data-st="all">All <span>${list.length}</span></button>
+          <button type="button" class="dk-chip${dcFilterState==='running'?' active':''}" data-st="running">Running <span>${runningN}</span></button>
+          <button type="button" class="dk-chip${dcFilterState==='exited'?' active':''}" data-st="exited">Exited</button>
+          <button type="button" class="dk-chip${dcFilterState==='other'?' active':''}" data-st="other">Other</button>
         </div>
-        <div class="dk-meta">
-          <div class="dk-row"><span class="dk-k">Image</span><span class="dk-v" title="${escapeHtml(ct.image||'')}">${escapeHtml(ct.image||'—')}</span></div>
-          <div class="dk-row"><span class="dk-k">ID</span><span class="dk-v mono">${escapeHtml(shortId)}</span></div>
-          <div class="dk-row"><span class="dk-k">Ports</span><span class="dk-v">${escapeHtml(ports||'—')}</span></div>
-          <div class="dk-row"><span class="dk-k">Status</span><span class="dk-v" title="${escapeHtml(ct.status||'')}">${escapeHtml(ct.status||'—')}</span></div>
-        </div>
-        <div class="dk-actions">
-          <button class="btn btn-xs btn-success dc-act" data-id="${ct.id}" data-act="start" ${run?'disabled':''} title="Start">▶</button>
-          <button class="btn btn-xs btn-warning dc-act" data-id="${ct.id}" data-act="stop" ${!run||paused?'disabled':''} title="Stop">⏹</button>
-          <button class="btn btn-xs btn-ghost dc-act" data-id="${ct.id}" data-act="restart" title="Restart">↻</button>
-          <button class="btn btn-xs btn-ghost dc-act" data-id="${ct.id}" data-act="logs" title="Logs">📋</button>
-          <button class="btn btn-xs btn-ghost dc-act" data-id="${ct.id}" data-act="stats" title="Stats">📊</button>
-          <button class="btn btn-xs btn-ghost dc-act" data-id="${ct.id}" data-act="inspect" title="Inspect">🔍</button>
-          <button class="btn btn-xs btn-danger dc-act" data-id="${ct.id}" data-act="remove" data-name="${escapeHtml(nm)}" title="Remove">🗑</button>
-        </div>
-      </div>`;
-    });
-    html+='</div>';
-    dc.innerHTML=html;
+      </div>
+      <div class="dk-toolbar-right">
+        <span class="text-sm text-muted" id="dc-count"></span>
+        <button class="btn btn-sm btn-success" id="dc-create-btn">+ Create</button>
+        <button class="btn btn-sm btn-ghost" id="dc-refresh">⟳ Refresh</button>
+      </div>
+    </div>
+    <div id="dc-body"></div>`;
+
+    const bindActs=()=>{
+      dc.querySelectorAll('.dc-act').forEach(btn=>{
+        btn.onclick=async function(){
+          const id=this.dataset.id;const act=this.dataset.act;
+          if(!id)return;
+          if(act==='logs'){renderDockerLogs(dc,id);return}
+          if(act==='stats'){renderDockerStats(dc,id);return}
+          if(act==='inspect'){renderDockerInspect(dc,id);return}
+          if(act==='remove'){
+            const nm=this.dataset.name||id.substring(0,12);
+            confirmDialog({title:'Remove Container',messageHtml:'Remove container <strong>'+escapeHtml(nm)+'</strong>? This cannot be undone.',okText:'Remove',danger:true,loadingText:'Removing...',onConfirm:async()=>{
+              const r=await api('/docker/containers/'+encodeURIComponent(id)+'/remove',{method:'POST'});
+              if(!r.success)throw new Error(r.message||'Remove failed');
+              showToast('Container removed','success');renderDockerContainers(dc);
+            }});
+            return;
+          }
+          this.disabled=true;const orig=this.textContent;this.textContent='…';
+          try{
+            const r=await api('/docker/containers/'+encodeURIComponent(id)+'/'+act,{method:'POST'});
+            if(!r.success)showToast((r.message||'Failed'),'error');
+            renderDockerContainers(dc);
+          }catch(e){if(e.message!=='Unauthorized')showToast('Error: '+e.message,'error');this.disabled=false;this.textContent=orig}
+        };
+      });
+    };
+
+    const paintBody=()=>{
+      const q=dcFilterQ.trim().toLowerCase();
+      const filtered=list.filter(ct=>{
+        const st=(ct.state||'').toLowerCase();
+        if(dcFilterState==='running'&&st!=='running')return false;
+        if(dcFilterState==='exited'&&st!=='exited')return false;
+        if(dcFilterState==='other'&&(st==='running'||st==='exited'))return false;
+        if(!q)return true;
+        const nm=(ct.name||'').replace(/^\//,'').toLowerCase();
+        const img=(ct.image||'').toLowerCase();
+        const id=(ct.id||'').toLowerCase();
+        const ports=Array.isArray(ct.ports)?ct.ports.join(' ').toLowerCase():String(ct.ports||'').toLowerCase();
+        return nm.includes(q)||img.includes(q)||id.includes(q)||ports.includes(q)||st.includes(q);
+      });
+      const countEl=document.getElementById('dc-count');
+      if(countEl)countEl.textContent=filtered.length+' shown';
+      document.querySelectorAll('#dc-chips .dk-chip').forEach(b=>b.classList.toggle('active',b.dataset.st===dcFilterState));
+      const body=document.getElementById('dc-body');
+      if(!body)return;
+      if(list.length===0){
+        body.innerHTML='<div class="empty-state"><div class="icon">🐳</div><div>No containers yet</div></div>';
+        return;
+      }
+      if(filtered.length===0){
+        body.innerHTML='<div class="empty-state"><div class="icon">🔎</div><div>No containers match this filter</div></div>';
+        return;
+      }
+      let html='<div class="dk-grid">';
+      filtered.forEach(ct=>{
+        const shortId=(ct.id||'').substring(0,12);
+        const st=ct.state||'';
+        const sc=st.toLowerCase();
+        const ports=Array.isArray(ct.ports)?ct.ports.join(', '):(ct.ports||'');
+        const nm=(ct.name||'').replace(/^\//,'');
+        const run=st==='running';const paused=st==='paused';
+        html+=`<div class="dk-card">
+          <div class="dk-card-head">
+            <div class="dk-name" title="${escapeHtml(nm)}">${escapeHtml(nm||shortId)}</div>
+            <span class="status-badge ${sc}">${escapeHtml(st)}</span>
+          </div>
+          <div class="dk-meta">
+            <div class="dk-row"><span class="dk-k">Image</span><span class="dk-v" title="${escapeHtml(ct.image||'')}">${escapeHtml(ct.image||'—')}</span></div>
+            <div class="dk-row"><span class="dk-k">ID</span><span class="dk-v mono">${escapeHtml(shortId)}</span></div>
+            <div class="dk-row"><span class="dk-k">Ports</span><span class="dk-v">${escapeHtml(ports||'—')}</span></div>
+            <div class="dk-row"><span class="dk-k">Status</span><span class="dk-v" title="${escapeHtml(ct.status||'')}">${escapeHtml(ct.status||'—')}</span></div>
+          </div>
+          <div class="dk-actions">
+            <button class="btn btn-xs btn-success dc-act" data-id="${ct.id}" data-act="start" ${run?'disabled':''} title="Start">▶</button>
+            <button class="btn btn-xs btn-warning dc-act" data-id="${ct.id}" data-act="stop" ${!run||paused?'disabled':''} title="Stop">⏹</button>
+            <button class="btn btn-xs btn-ghost dc-act" data-id="${ct.id}" data-act="restart" title="Restart">↻</button>
+            <button class="btn btn-xs btn-ghost dc-act" data-id="${ct.id}" data-act="logs" title="Logs">📋</button>
+            <button class="btn btn-xs btn-ghost dc-act" data-id="${ct.id}" data-act="stats" title="Stats">📊</button>
+            <button class="btn btn-xs btn-ghost dc-act" data-id="${ct.id}" data-act="inspect" title="Inspect">🔍</button>
+            <button class="btn btn-xs btn-danger dc-act" data-id="${ct.id}" data-act="remove" data-name="${escapeHtml(nm)}" title="Remove">🗑</button>
+          </div>
+        </div>`;
+      });
+      html+='</div>';
+      body.innerHTML=html;
+      bindActs();
+    };
+
+    document.getElementById('dc-search').oninput=function(){dcFilterQ=this.value;paintBody()};
+    document.getElementById('dc-chips').onclick=e=>{
+      const btn=e.target.closest('.dk-chip');if(!btn)return;
+      dcFilterState=btn.dataset.st||'all';paintBody();
+    };
     document.getElementById('dc-refresh').onclick=()=>renderDockerContainers(dc);
     document.getElementById('dc-create-btn').onclick=()=>renderDockerCreate(dc);
-    dc.querySelectorAll('.dc-act').forEach(btn=>{
-      btn.onclick=async function(){
-        const id=this.dataset.id;const act=this.dataset.act;
-        if(!id)return;
-        if(act==='logs'){renderDockerLogs(dc,id);return}
-        if(act==='stats'){renderDockerStats(dc,id);return}
-        if(act==='inspect'){renderDockerInspect(dc,id);return}
-        if(act==='remove'){
-          const nm=this.dataset.name||id.substring(0,12);
-          confirmDialog({title:'Remove Container',messageHtml:'Remove container <strong>'+escapeHtml(nm)+'</strong>? This cannot be undone.',okText:'Remove',danger:true,loadingText:'Removing...',onConfirm:async()=>{
-            const r=await api('/docker/containers/'+encodeURIComponent(id)+'/remove',{method:'POST'});
-            if(!r.success)throw new Error(r.message||'Remove failed');
-            showToast('Container removed','success');renderDockerContainers(dc);
-          }});
-          return;
-        }
-        this.disabled=true;const orig=this.textContent;this.textContent='…';
-        try{
-          const r=await api('/docker/containers/'+encodeURIComponent(id)+'/'+act,{method:'POST'});
-          if(!r.success)showToast((r.message||'Failed'),'error');
-          renderDockerContainers(dc);
-        }catch(e){if(e.message!=='Unauthorized')showToast('Error: '+e.message,'error');this.disabled=false;this.textContent=orig}
-      };
-    });
+    paintBody();
   }catch(e){if(e.message!=='Unauthorized')dc.innerHTML='<div class="error-msg">Error: '+e.message+'</div>'}
 }
 
 async function renderDockerLogs(dc,id){
-  await loadDockerLogs(dc,id,200);
+  await loadDockerLogs(dc,id,200,false);
 }
-async function loadDockerLogs(dc,id,tail){
-  dc.innerHTML='<div style="text-align:center;padding:2rem;color:var(--text-dim)">Loading logs...</div>';
+async function loadDockerLogs(dc,id,tail,silent){
+  let pre=dc.querySelector('#dc-log-pre');
+  const nearBottom=pre?(pre.scrollHeight-pre.scrollTop-pre.clientHeight)<48:true;
+  const prevScroll=pre?pre.scrollTop:0;
+  if(!silent||!pre){
+    if(!silent)dc.innerHTML='<div style="text-align:center;padding:2rem;color:var(--text-dim)">Loading logs...</div>';
+  } else {
+    const st=dc.querySelector('#dc-log-status');
+    if(st)st.textContent='Refreshing…';
+  }
   try{
     const j=await api('/docker/containers/'+encodeURIComponent(id)+'/logs?tail='+tail);
-    dc.innerHTML=`
-    <div class="flex justify-between items-center mb-2">
-      <span style="font-size:0.85rem;font-weight:600">Logs</span>
-      <div class="flex items-center gap-2">
-        <span class="text-sm text-muted">Lines:</span>
-        <select id="dc-log-tail" style="width:auto;padding:2px 8px" onchange="loadDockerLogs(document.getElementById('docker-content'),'${id}',this.value)">
-          <option value="50" ${tail==50?'selected':''}>50</option>
-          <option value="200" ${tail==200?'selected':''}>200</option>
-          <option value="1000" ${tail==1000?'selected':''}>1000</option>
-          <option value="5000" ${tail==5000?'selected':''}>5000</option>
-        </select>
-        <button class="btn btn-sm" id="dc-logs-back">Back</button>
+    const logs=j.data?.logs||'';
+    if(!silent||!dc.querySelector('#dc-log-pre')){
+      dc.innerHTML=`
+      <div class="flex justify-between items-center mb-2">
+        <span style="font-size:0.85rem;font-weight:600">Logs</span>
+        <div class="flex items-center gap-2">
+          <span class="text-sm text-muted" id="dc-log-status"></span>
+          <span class="text-sm text-muted">Lines:</span>
+          <select id="dc-log-tail" style="width:auto;padding:2px 8px">
+            <option value="50" ${tail==50?'selected':''}>50</option>
+            <option value="200" ${tail==200?'selected':''}>200</option>
+            <option value="1000" ${tail==1000?'selected':''}>1000</option>
+            <option value="5000" ${tail==5000?'selected':''}>5000</option>
+          </select>
+          <button class="btn btn-sm btn-ghost" id="dc-logs-refresh">⟳</button>
+          <button class="btn btn-sm" id="dc-logs-back">Back</button>
+        </div>
       </div>
-    </div>
-    <pre style="background:#1a1a2e;color:#e0e0e0;padding:12px;border-radius:6px;font-size:0.8rem;max-height:600px;overflow-y:auto;font-family:monospace;white-space:pre-wrap">${escapeHtml(j.data?.logs||'')||'<span style="color:var(--text-dim)">No logs</span>'}</pre>`;
-    document.getElementById('dc-logs-back').onclick=()=>renderDockerContainers(dc);
+      <pre id="dc-log-pre" style="background:#1a1a2e;color:#e0e0e0;padding:12px;border-radius:6px;font-size:0.8rem;max-height:600px;overflow-y:auto;font-family:monospace;white-space:pre-wrap"></pre>`;
+      document.getElementById('dc-log-tail').onchange=function(){loadDockerLogs(dc,id,this.value,false)};
+      document.getElementById('dc-logs-refresh').onclick=()=>loadDockerLogs(dc,id,document.getElementById('dc-log-tail').value,true);
+      document.getElementById('dc-logs-back').onclick=()=>renderDockerContainers(dc);
+      pre=document.getElementById('dc-log-pre');
+    }
+    pre.textContent=logs||'No logs';
+    if(!silent||nearBottom)pre.scrollTop=pre.scrollHeight;
+    else pre.scrollTop=prevScroll;
+    const st=dc.querySelector('#dc-log-status');
+    if(st)st.textContent='Updated '+new Date().toLocaleTimeString();
   }catch(e){if(e.message!=='Unauthorized')dc.innerHTML='<div class="error-msg">Error: '+e.message+'</div>'}
 }
 
@@ -312,51 +387,72 @@ function renderDockerCreate(dc){
 }
 
 // ── Images ──
+let diFilterQ='';
 async function renderDockerImages(dc){
   dc.innerHTML='<div style="text-align:center;padding:2rem;color:var(--text-dim)">Loading images...</div>';
   try{
     const j=await api('/docker/images');
     if(!j.success){dc.innerHTML='<div class="error-msg">Failed</div>';return}
     const list=j.data||[];if(!Array.isArray(list)){dc.innerHTML='<div class="error-msg">Invalid</div>';return}
-    let html='<div class="flex justify-between items-center mb-3"><span style="font-size:0.85rem;color:var(--text-dim)">'+list.length+' image(s)</span><button class="btn btn-sm btn-success" id="di-pull">+ Pull</button></div>';
-    if(list.length===0){
-      html+='<div class="empty-state"><div class="icon">📦</div><div>No images yet</div></div>';
-      dc.innerHTML=html;document.getElementById('di-pull').onclick=()=>renderDockerPull(dc);return;
-    }
-    html+='<div class="dk-grid">';
-    list.forEach(img=>{
-      const tags=img.repo_tags||[];
-      const full=tags.length>0?tags[0]:'<none>:<none>';
-      const repo=tags.length>0?(tags[0].split(':')[0]||'<none>'):'<none>';
-      const tag=tags.length>0?(tags[0].split(':')[1]||'latest'):'<none>';
-      const sid=(img.id||'').replace('sha256:','').substring(0,12);
-      const sz=img.size||0;
-      const szStr=sz>1073741824?(sz/1073741824).toFixed(2)+' GB':sz>1048576?(sz/1048576).toFixed(1)+' MB':(sz/1024).toFixed(0)+' KB';
-      html+=`<div class="dk-card">
-        <div class="dk-card-head">
-          <div class="dk-name" title="${escapeHtml(full)}">${escapeHtml(repo)}</div>
-          <span class="app-cat">${escapeHtml(tag)}</span>
-        </div>
-        <div class="dk-meta">
-          <div class="dk-row"><span class="dk-k">ID</span><span class="dk-v mono">${escapeHtml(sid)}</span></div>
-          <div class="dk-row"><span class="dk-k">Size</span><span class="dk-v">${szStr}</span></div>
-        </div>
-        <div class="dk-actions">
-          <button class="btn btn-xs btn-danger di-rm" data-id="${escapeHtml(img.id||'')}" data-name="${escapeHtml(full)}" title="Remove">🗑 Remove</button>
-        </div>
-      </div>`;
-    });
-    html+='</div>';
-    dc.innerHTML=html;
+    dc.innerHTML=`<div class="dk-toolbar">
+      <div class="dk-toolbar-left">
+        <input type="search" class="dk-search" id="di-search" placeholder="Search image…" value="${escapeHtml(diFilterQ)}" autocomplete="off">
+        <span class="text-sm text-muted" id="di-count"></span>
+      </div>
+      <div class="dk-toolbar-right">
+        <button class="btn btn-sm btn-success" id="di-pull">+ Pull</button>
+      </div>
+    </div>
+    <div id="di-body"></div>`;
+    const paint=()=>{
+      const q=diFilterQ.trim().toLowerCase();
+      const filtered=list.filter(img=>{
+        if(!q)return true;
+        const tags=(img.repo_tags||[]).join(' ').toLowerCase();
+        const id=(img.id||'').toLowerCase();
+        return tags.includes(q)||id.includes(q);
+      });
+      document.getElementById('di-count').textContent=filtered.length+' / '+list.length+' image(s)';
+      const body=document.getElementById('di-body');
+      if(list.length===0){body.innerHTML='<div class="empty-state"><div class="icon">📦</div><div>No images yet</div></div>';return}
+      if(filtered.length===0){body.innerHTML='<div class="empty-state"><div class="icon">🔎</div><div>No images match</div></div>';return}
+      let html='<div class="dk-grid">';
+      filtered.forEach(img=>{
+        const tags=img.repo_tags||[];
+        const full=tags.length>0?tags[0]:'<none>:<none>';
+        const repo=tags.length>0?(tags[0].split(':')[0]||'<none>'):'<none>';
+        const tag=tags.length>0?(tags[0].split(':')[1]||'latest'):'<none>';
+        const sid=(img.id||'').replace('sha256:','').substring(0,12);
+        const sz=img.size||0;
+        const szStr=sz>1073741824?(sz/1073741824).toFixed(2)+' GB':sz>1048576?(sz/1048576).toFixed(1)+' MB':(sz/1024).toFixed(0)+' KB';
+        html+=`<div class="dk-card">
+          <div class="dk-card-head">
+            <div class="dk-name" title="${escapeHtml(full)}">${escapeHtml(repo)}</div>
+            <span class="app-cat">${escapeHtml(tag)}</span>
+          </div>
+          <div class="dk-meta">
+            <div class="dk-row"><span class="dk-k">ID</span><span class="dk-v mono">${escapeHtml(sid)}</span></div>
+            <div class="dk-row"><span class="dk-k">Size</span><span class="dk-v">${szStr}</span></div>
+          </div>
+          <div class="dk-actions">
+            <button class="btn btn-xs btn-danger di-rm" data-id="${escapeHtml(img.id||'')}" data-name="${escapeHtml(full)}" title="Remove">🗑 Remove</button>
+          </div>
+        </div>`;
+      });
+      html+='</div>';
+      body.innerHTML=html;
+      body.querySelectorAll('.di-rm').forEach(btn=>{btn.onclick=function(){
+        const id=this.dataset.id;const name=this.dataset.name||id;
+        confirmDialog({title:'Remove Image',messageHtml:'Remove image <strong>'+escapeHtml(name)+'</strong>?',okText:'Remove',danger:true,loadingText:'Removing...',onConfirm:async()=>{
+          const r=await api('/docker/images/'+encodeURIComponent(id)+'/remove',{method:'POST'});
+          if(!r.success)throw new Error(r.message||'Remove failed');
+          showToast('Removed','success');renderDockerImages(dc);
+        }});
+      };});
+    };
+    document.getElementById('di-search').oninput=function(){diFilterQ=this.value;paint()};
     document.getElementById('di-pull').onclick=()=>renderDockerPull(dc);
-    dc.querySelectorAll('.di-rm').forEach(btn=>{btn.onclick=function(){
-      const id=this.dataset.id;const name=this.dataset.name||id;
-      confirmDialog({title:'Remove Image',messageHtml:'Remove image <strong>'+escapeHtml(name)+'</strong>?',okText:'Remove',danger:true,loadingText:'Removing...',onConfirm:async()=>{
-        const r=await api('/docker/images/'+encodeURIComponent(id)+'/remove',{method:'POST'});
-        if(!r.success)throw new Error(r.message||'Remove failed');
-        showToast('Removed','success');renderDockerImages(dc);
-      }});
-    };});
+    paint();
   }catch(e){if(e.message!=='Unauthorized')dc.innerHTML='<div class="error-msg">Error: '+e.message+'</div>'}
 }
 
@@ -987,6 +1083,7 @@ async function renderLogViewer(){
   <div class="flex justify-between items-center mb-4">
     <h2 style="font-size:1.1rem;font-weight:600">Log Viewer</h2>
     <div class="flex items-center gap-3">
+      <span id="log-refresh-status" class="text-sm text-muted"></span>
       <label class="toggle-switch">
         <input type="checkbox" id="log-auto-refresh">
         <span class="toggle-slider"></span>
@@ -1028,10 +1125,12 @@ async function renderLogViewer(){
     logRefreshEnabled=this.checked;
     if(logRefreshEnabled&&currentLogFile){
       if(logRefreshInterval)clearInterval(logRefreshInterval);
-      logRefreshInterval=setInterval(()=>loadLogContent(currentLogFile),5000);
+      logRefreshInterval=setInterval(()=>loadLogContent(currentLogFile,{silent:true}),5000);
     } else {
       if(logRefreshInterval)clearInterval(logRefreshInterval);
       logRefreshInterval=null;
+      const st=document.getElementById('log-refresh-status');
+      if(st)st.textContent='';
     }
   });
 
@@ -1067,15 +1166,21 @@ async function loadLogFileList(){
   }
 }
 
-async function loadLogContent(filePath){
+async function loadLogContent(filePath,opts={}){
   const area=document.getElementById('log-content-area');
   if(!area)return;
-  area.textContent='Loading...';
+  const silent=!!opts.silent;
+  const statusEl=document.getElementById('log-refresh-status');
+  const nearBottom=(area.scrollHeight-area.scrollTop-area.clientHeight)<48;
+  const prevScroll=area.scrollTop;
+  const hadContent=area.textContent&&area.textContent!=='Loading...'&&area.textContent!=='Select a log file';
+  if(!silent||!hadContent)area.textContent='Loading...';
+  else if(statusEl)statusEl.textContent='Refreshing…';
   try{
     let url='/log/read?path='+encodeURIComponent(filePath)+'&lines=200';
     if(currentLogKeyword)url+='&keyword='+encodeURIComponent(currentLogKeyword);
     const j=await api(url);
-    if(!j.success){area.textContent=j.message||'Failed to load log';return}
+    if(!j.success){area.textContent=j.message||'Failed to load log';if(statusEl)statusEl.textContent='';return}
     const lines=j.data&&Array.isArray(j.data.lines)?j.data.lines:(typeof j.data==='string'?[j.data]:[]);
     const text=lines.join('\n');
     if(currentLogKeyword){
@@ -1087,10 +1192,16 @@ async function loadLogContent(filePath){
     } else {
       area.textContent=text;
     }
-    // Auto-scroll to the newest lines at the bottom.
-    area.scrollTop=area.scrollHeight;
+    // Stick to bottom when following live logs; otherwise preserve scroll position.
+    if(!silent||nearBottom||!hadContent)area.scrollTop=area.scrollHeight;
+    else area.scrollTop=prevScroll;
+    if(statusEl){
+      const t=new Date();
+      statusEl.textContent='Updated '+t.toLocaleTimeString();
+    }
   }catch(e){
     if(e.message!=='Unauthorized')area.textContent='Error: '+e.message;
+    if(statusEl)statusEl.textContent='';
   }
 }
 

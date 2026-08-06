@@ -281,6 +281,16 @@ td.clickable:hover{text-decoration:underline;color:var(--secondary)}
 .info-item .info-v{font-size:.95rem;color:var(--text);font-weight:600;font-variant-numeric:tabular-nums;word-break:break-word}
 
 /* ── Docker container cards (1Panel-style) ── */
+.dk-toolbar{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:.75rem;margin-bottom:1rem}
+.dk-toolbar-left{display:flex;flex-wrap:wrap;align-items:center;gap:.6rem;min-width:0;flex:1}
+.dk-toolbar-right{display:flex;align-items:center;gap:.45rem;flex-shrink:0}
+.dk-search{max-width:260px;width:100%;padding:7px 12px;border:1px solid var(--border);border-radius:8px;background:var(--card);color:var(--text);font-size:.85rem}
+.dk-search:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-glow)}
+.dk-chips{display:flex;flex-wrap:wrap;gap:.35rem}
+.dk-chip{border:1px solid var(--border);background:var(--card);color:var(--text-muted);border-radius:999px;padding:4px 10px;font-size:.75rem;font-weight:600;cursor:pointer;transition:all var(--transition)}
+.dk-chip span{margin-left:4px;opacity:.75;font-variant-numeric:tabular-nums}
+.dk-chip:hover{border-color:var(--border-accent);color:var(--text)}
+.dk-chip.active{background:var(--primary-glow);border-color:rgba(56,189,248,.45);color:var(--primary)}
 .dk-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:1rem}
 .dk-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:1rem 1.1rem;display:flex;flex-direction:column;gap:.7rem;box-shadow:var(--shadow-sm);transition:border-color var(--transition),box-shadow var(--transition)}
 .dk-card:hover{border-color:var(--border-accent);box-shadow:var(--shadow)}
