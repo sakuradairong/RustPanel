@@ -186,8 +186,8 @@ td.clickable:hover{text-decoration:underline;color:var(--secondary)}
 .drawer-pre{background:var(--bg-elevated);border:1px solid var(--border);border-radius:8px;padding:.7rem .8rem;font-family:var(--mono);font-size:.75rem;max-height:220px;overflow:auto;white-space:pre-wrap;color:var(--text-muted)}
 
 /* ── Batch action bar ── */
-.dk-batch{display:none;align-items:center;gap:.5rem;flex-wrap:wrap;margin:0 0 .85rem;padding:.55rem .75rem;background:var(--primary-glow);border:1px solid rgba(56,189,248,.35);border-radius:10px}
-.dk-batch.show{display:flex}
+.dk-batch{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;margin:0 0 .85rem;padding:.55rem .75rem;background:var(--bg-elevated);border:1px dashed var(--border);border-radius:10px;min-height:40px;opacity:.55;pointer-events:none}
+.dk-batch.show{background:var(--primary-glow);border:1px solid rgba(56,189,248,.35);opacity:1;pointer-events:auto}
 .dk-batch .dk-batch-label{font-size:.82rem;font-weight:600;color:var(--primary);margin-right:.25rem}
 .dk-card.selected{border-color:rgba(56,189,248,.55);box-shadow:0 0 0 1px rgba(56,189,248,.25)}
 .dk-check{appearance:auto;width:16px;height:16px;margin:0;cursor:pointer;accent-color:var(--primary);flex-shrink:0}
