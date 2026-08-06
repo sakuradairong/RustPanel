@@ -269,25 +269,23 @@ async function renderDockerInspect(dc,id){
   }catch(e){if(e.message!=='Unauthorized')dc.innerHTML='<div class="error-msg">Error: '+e.message+'</div>'}
 }
 
-async function renderDockerCreate(dc){
-  dc.innerHTML=`
-  <div class="card" style="max-width:500px">
-    <h3 style="font-size:0.95rem;margin-bottom:1rem">Create Container</h3>
+function renderDockerCreate(dc){
+  const m=openModal(`
+    <h3>Create Container</h3>
     <div class="field"><label>Image</label><input type="text" id="dc-img" placeholder="nginx:latest"></div>
     <div class="field"><label>Name</label><input type="text" id="dc-name" placeholder="my-nginx"></div>
     <div class="field"><label>Command</label><input type="text" id="dc-cmd" placeholder="optional"></div>
     <div id="dc-err" class="error-msg" style="display:none"></div>
-    <div class="btn-row mt-3">
-      <button class="btn btn-sm" id="dc-c-back">Back</button>
+    <div class="btn-row">
+      <button class="btn btn-sm btn-ghost" id="dc-c-back">Cancel</button>
       <button class="btn btn-sm btn-success" id="dc-c-do">Create & Start</button>
-    </div>
-  </div>`;
-  document.getElementById('dc-c-back').onclick=()=>renderDockerContainers(dc);
-  document.getElementById('dc-c-do').onclick=async function(){
-    const img=document.getElementById('dc-img').value.trim();
-    const nm=document.getElementById('dc-name').value.trim();
-    const cmdStr=document.getElementById('dc-cmd').value.trim();
-    const err=document.getElementById('dc-err');
+    </div>`,{maxWidth:'480px'});
+  m.root.querySelector('#dc-c-back').addEventListener('click',m.close);
+  m.root.querySelector('#dc-c-do').addEventListener('click',async function(){
+    const img=m.root.querySelector('#dc-img').value.trim();
+    const nm=m.root.querySelector('#dc-name').value.trim();
+    const cmdStr=m.root.querySelector('#dc-cmd').value.trim();
+    const err=m.root.querySelector('#dc-err');
     if(!img||!nm){err.textContent='Image and name required';err.style.display='block';return}
     err.style.display='none';
     this.disabled=true;this.textContent='Creating...';
@@ -297,11 +295,11 @@ async function renderDockerCreate(dc){
       const r=await api('/docker/containers',{method:'POST',body:JSON.stringify(body)});
       if(r.success){
         showToast('Created: '+nm,'success');
-        if(r.data?.container_id) await api('/docker/containers/'+encodeURIComponent(r.data.container_id)+'/start',{method:'POST'});
-        renderDockerContainers(dc);
+        if(r.data&&r.data.container_id) await api('/docker/containers/'+encodeURIComponent(r.data.container_id)+'/start',{method:'POST'});
+        m.close();renderDockerContainers(dc);
       } else {err.textContent=r.message||'Failed';err.style.display='block';this.disabled=false;this.textContent='Create & Start'}
-    }catch(e){if(e.message!=='Unauthorized'){err.textContent='Error: '+e.message;err.style.display='block'}this.disabled=false;this.textContent='Create & Start'}
-  };
+    }catch(e){if(e.message==='Unauthorized'){m.close();return}err.textContent='Error: '+e.message;err.style.display='block';this.disabled=false;this.textContent='Create & Start'}
+  });
 }
 
 // ── Images ──
@@ -353,31 +351,27 @@ async function renderDockerImages(dc){
   }catch(e){if(e.message!=='Unauthorized')dc.innerHTML='<div class="error-msg">Error: '+e.message+'</div>'}
 }
 
-async function renderDockerPull(dc){
-  dc.innerHTML=`
-  <div class="card" style="max-width:450px">
-    <h3 style="font-size:0.95rem;margin-bottom:1rem">Pull Image</h3>
+function renderDockerPull(dc){
+  const m=openModal(`
+    <h3>Pull Image</h3>
     <div class="field"><label>Image</label><input type="text" id="di-pull-img" placeholder="nginx:latest"></div>
-    <div id="di-pull-out" style="display:none;background:var(--bg);padding:8px;border-radius:4px;font-size:0.8rem;max-height:150px;overflow-y:auto"></div>
     <div id="di-pull-err" class="error-msg" style="display:none"></div>
-    <div class="btn-row mt-3">
-      <button class="btn btn-sm" id="di-pull-back">Back</button>
+    <div class="btn-row">
+      <button class="btn btn-sm btn-ghost" id="di-pull-back">Cancel</button>
       <button class="btn btn-sm btn-success" id="di-pull-go">Pull</button>
-    </div>
-  </div>`;
-  document.getElementById('di-pull-back').onclick=()=>renderDockerImages(dc);
-  document.getElementById('di-pull-go').onclick=async function(){
-    const img=document.getElementById('di-pull-img').value.trim();
-    const err=document.getElementById('di-pull-err');const out=document.getElementById('di-pull-out');
+    </div>`,{maxWidth:'460px'});
+  m.root.querySelector('#di-pull-back').addEventListener('click',()=>{m.close();renderDockerImages(dc)});
+  m.root.querySelector('#di-pull-go').addEventListener('click',async function(){
+    const img=m.root.querySelector('#di-pull-img').value.trim();
+    const err=m.root.querySelector('#di-pull-err');
     if(!img){err.textContent='Image required';err.style.display='block';return}
-    err.style.display='none';out.style.display='none';
-    this.disabled=true;this.textContent='Pulling...';
+    err.style.display='none';this.disabled=true;this.textContent='Pulling…';
     try{
       const r=await api('/docker/images/pull',{method:'POST',body:JSON.stringify({image:img})});
-      if(r.success){out.style.display='block';out.textContent=r.data?.output||'Done';showToast('Pulled: '+img,'success');this.textContent='Done'}
+      if(r.success){showToast('Pulled: '+img,'success');m.close();renderDockerImages(dc)}
       else{err.textContent=r.message||'Failed';err.style.display='block';this.disabled=false;this.textContent='Pull'}
-    }catch(e){if(e.message!=='Unauthorized'){err.textContent='Error: '+e.message;err.style.display='block'}this.disabled=false;this.textContent='Pull'}
-  };
+    }catch(e){if(e.message==='Unauthorized'){m.close();return}err.textContent='Error: '+e.message;err.style.display='block';this.disabled=false;this.textContent='Pull'}
+  });
 }
 
 // ── Networks ──
@@ -424,36 +418,33 @@ async function renderDockerNetworks(dc){
   }catch(e){if(e.message!=='Unauthorized')dc.innerHTML='<div class="error-msg">Error: '+e.message+'</div>'}
 }
 
-async function renderDockerNetworkCreate(dc){
-  dc.innerHTML=`
-  <div class="card" style="max-width:500px">
-    <h3 style="font-size:0.95rem;margin-bottom:1rem">Create Network</h3>
+function renderDockerNetworkCreate(dc){
+  const m=openModal(`
+    <h3>Create Network</h3>
     <div class="field"><label>Name</label><input type="text" id="dn-name" placeholder="my-network"></div>
     <div class="field"><label>Driver</label><select id="dn-driver"><option value="bridge">bridge</option><option value="overlay">overlay</option><option value="macvlan">macvlan</option><option value="host">host</option></select></div>
-    <div class="field"><label>Subnet</label><input type="text" id="dn-sub" placeholder="172.20.0.0/16"></div>
-    <div class="field"><label>Gateway</label><input type="text" id="dn-gw" placeholder="172.20.0.1"></div>
+    <div class="form-row"><div class="field"><label>Subnet</label><input type="text" id="dn-sub" placeholder="172.20.0.0/16"></div><div class="field"><label>Gateway</label><input type="text" id="dn-gw" placeholder="172.20.0.1"></div></div>
     <div id="dn-err" class="error-msg" style="display:none"></div>
-    <div class="btn-row mt-3">
-      <button class="btn btn-sm" id="dn-c-back">Back</button>
+    <div class="btn-row">
+      <button class="btn btn-sm btn-ghost" id="dn-c-back">Cancel</button>
       <button class="btn btn-sm btn-success" id="dn-c-do">Create</button>
-    </div>
-  </div>`;
-  document.getElementById('dn-c-back').onclick=()=>renderDockerNetworks(dc);
-  document.getElementById('dn-c-do').onclick=async function(){
-    const nm=document.getElementById('dn-name').value.trim();
-    const drv=document.getElementById('dn-driver').value;
-    const sub=document.getElementById('dn-sub').value.trim();
-    const gw=document.getElementById('dn-gw').value.trim();
-    const err=document.getElementById('dn-err');
+    </div>`,{maxWidth:'480px'});
+  m.root.querySelector('#dn-c-back').addEventListener('click',m.close);
+  m.root.querySelector('#dn-c-do').addEventListener('click',async function(){
+    const nm=m.root.querySelector('#dn-name').value.trim();
+    const drv=m.root.querySelector('#dn-driver').value;
+    const sub=m.root.querySelector('#dn-sub').value.trim();
+    const gw=m.root.querySelector('#dn-gw').value.trim();
+    const err=m.root.querySelector('#dn-err');
     if(!nm){err.textContent='Name required';err.style.display='block';return}
     err.style.display='none';this.disabled=true;this.textContent='Creating...';
     try{
       const body={name:nm,driver:drv};if(sub)body.subnet=sub;if(gw)body.gateway=gw;
       const r=await api('/docker/networks',{method:'POST',body:JSON.stringify(body)});
-      if(r.success){showToast('Created','success');renderDockerNetworks(dc)}
+      if(r.success){showToast('Created','success');m.close();renderDockerNetworks(dc)}
       else{err.textContent=r.message||'Failed';err.style.display='block';this.disabled=false;this.textContent='Create'}
-    }catch(e){if(e.message!=='Unauthorized'){err.textContent='Error: '+e.message;err.style.display='block'}this.disabled=false;this.textContent='Create'}
-  };
+    }catch(e){if(e.message==='Unauthorized'){m.close();return}err.textContent='Error: '+e.message;err.style.display='block';this.disabled=false;this.textContent='Create'}
+  });
 }
 
 // ── Volumes ──
@@ -499,31 +490,29 @@ async function renderDockerVolumes(dc){
     };});
   }catch(e){if(e.message!=='Unauthorized')dc.innerHTML='<div class="error-msg">Error: '+e.message+'</div>'}
 }
-async function renderDockerVolumeCreate(dc){
-  dc.innerHTML=`
-  <div class="card" style="max-width:450px">
-    <h3 style="font-size:0.95rem;margin-bottom:1rem">Create Volume</h3>
+function renderDockerVolumeCreate(dc){
+  const m=openModal(`
+    <h3>Create Volume</h3>
     <div class="field"><label>Name</label><input type="text" id="dv-name" placeholder="my-volume"></div>
     <div class="field"><label>Driver</label><select id="dv-driver"><option value="local">local</option></select></div>
     <div id="dv-err" class="error-msg" style="display:none"></div>
-    <div class="btn-row mt-3">
-      <button class="btn btn-sm" id="dv-c-back">Back</button>
+    <div class="btn-row">
+      <button class="btn btn-sm btn-ghost" id="dv-c-back">Cancel</button>
       <button class="btn btn-sm btn-success" id="dv-c-do">Create</button>
-    </div>
-  </div>`;
-  document.getElementById('dv-c-back').onclick=()=>renderDockerVolumes(dc);
-  document.getElementById('dv-c-do').onclick=async function(){
-    const nm=document.getElementById('dv-name').value.trim();
-    const drv=document.getElementById('dv-driver').value;
-    const err=document.getElementById('dv-err');
+    </div>`,{maxWidth:'440px'});
+  m.root.querySelector('#dv-c-back').addEventListener('click',m.close);
+  m.root.querySelector('#dv-c-do').addEventListener('click',async function(){
+    const nm=m.root.querySelector('#dv-name').value.trim();
+    const drv=m.root.querySelector('#dv-driver').value;
+    const err=m.root.querySelector('#dv-err');
     if(!nm){err.textContent='Name required';err.style.display='block';return}
     err.style.display='none';this.disabled=true;this.textContent='Creating...';
     try{
       const r=await api('/docker/volumes',{method:'POST',body:JSON.stringify({name:nm,driver:drv})});
-      if(r.success){showToast('Created','success');renderDockerVolumes(dc)}
+      if(r.success){showToast('Created','success');m.close();renderDockerVolumes(dc)}
       else{err.textContent=r.message||'Failed';err.style.display='block';this.disabled=false;this.textContent='Create'}
-    }catch(e){if(e.message!=='Unauthorized'){err.textContent='Error: '+e.message;err.style.display='block'}this.disabled=false;this.textContent='Create'}
-  };
+    }catch(e){if(e.message==='Unauthorized'){m.close();return}err.textContent='Error: '+e.message;err.style.display='block';this.disabled=false;this.textContent='Create'}
+  });
 }
 // ── System Info ──
 function infoCard(k,v){
