@@ -1941,60 +1941,102 @@ async function renderFirewall(){
 }
 
 // ── Software Installer ──
+const APP_META={
+  nginx:{icon:'🌐',cat:'Web Server'},
+  mysql:{icon:'🗄️',cat:'Database'},
+  pgsql:{icon:'🐘',cat:'Database'},
+  redis:{icon:'🧩',cat:'Cache'},
+  docker:{icon:'🐳',cat:'Runtime'}
+};
 async function renderInstaller(){
   const c=document.getElementById('content');
   if(!c)return;
   c.innerHTML=`
-  <div class="flex justify-between items-center mb-4">
-    <h2 style="font-size:1.1rem;font-weight:600">Software Installer</h2>
+  <div class="section-header">
+    <div>
+      <h2 style="font-size:1.15rem;font-weight:700">App Store</h2>
+      <div class="text-sm text-dim" style="margin-top:2px">One-click install of common server software</div>
+    </div>
   </div>
-  <div id="installer-list" class="card">
-    <div style="text-align:center;padding:2rem;color:var(--text-dim)">Loading available software...</div>
+  <div id="installer-list">
+    <div class="app-grid">
+      <div class="app-card"><div class="skeleton skeleton-text" style="width:55%"></div><div class="skeleton skeleton-text"></div></div>
+      <div class="app-card"><div class="skeleton skeleton-text" style="width:55%"></div><div class="skeleton skeleton-text"></div></div>
+      <div class="app-card"><div class="skeleton skeleton-text" style="width:55%"></div><div class="skeleton skeleton-text"></div></div>
+    </div>
   </div>`;
   try{
     const j=await api('/installer/list');
     if(!j.success||!Array.isArray(j.data)){document.getElementById('installer-list').innerHTML='<div class="error-msg">Failed to load software list</div>';return}
-    let html='<div class="table-wrap"><table><thead><tr><th>Software</th><th>Description</th><th>Actions</th></tr></thead><tbody>';
+    let html='<div class="app-grid">';
     j.data.forEach(s=>{
-      html+=`<tr>
-        <td><strong>${escapeHtml(s.name)}</strong></td>
-        <td style="color:var(--text-muted)">${escapeHtml(s.description)}</td>
-        <td>
+      const m=APP_META[s.name]||{icon:'📦',cat:'Software'};
+      html+=`<div class="app-card">
+        <div class="app-top">
+          <div class="app-icon">${m.icon}</div>
+          <div class="app-head">
+            <div class="app-name">${escapeHtml(s.name)}</div>
+            <span class="app-cat">${escapeHtml(m.cat)}</span>
+          </div>
+        </div>
+        <div class="app-desc">${escapeHtml(s.description)}</div>
+        <div class="app-actions">
           <button class="btn btn-sm btn-success inst-install" data-soft="${escapeHtml(s.name)}">Install</button>
-          <button class="btn btn-sm btn-danger inst-uninstall" data-soft="${escapeHtml(s.name)}">Uninstall</button>
-        </td>
-      </tr>`;
+          <button class="btn btn-sm btn-ghost inst-uninstall" data-soft="${escapeHtml(s.name)}">Uninstall</button>
+        </div>
+      </div>`;
     });
-    html+='</tbody></table></div>';
+    html+='</div>';
     document.getElementById('installer-list').innerHTML=html;
     document.querySelectorAll('.inst-install').forEach(btn=>{
-      btn.addEventListener('click',async function(){
-        const soft=this.dataset.soft;
-        const version=prompt('Version (leave empty for latest):')||'';
-        this.disabled=true;this.textContent='Installing...';
-        try{
-          const r=await api('/installer/install',{method:'POST',body:JSON.stringify({software:soft,version:version||undefined})});
-          if(r.success)showToast(soft+' installed successfully','success');
-          else showToast(r.message||'Install failed','error');
-        }catch(e){if(e.message!=='Unauthorized')showToast('Error: '+e.message,'error')}
-        this.disabled=false;this.textContent='Install';
-      });
+      btn.addEventListener('click',function(){installSoftware(this.dataset.soft)});
     });
     document.querySelectorAll('.inst-uninstall').forEach(btn=>{
-      btn.addEventListener('click',async function(){
-        const soft=this.dataset.soft;
-        if(!confirm('Uninstall '+soft+'?'))return;
-        this.disabled=true;this.textContent='Uninstalling...';
-        try{
-          const r=await api('/installer/uninstall',{method:'POST',body:JSON.stringify({software:soft})});
-          if(r.success)showToast(soft+' uninstalled successfully','success');
-          else showToast(r.message||'Uninstall failed','error');
-        }catch(e){if(e.message!=='Unauthorized')showToast('Error: '+e.message,'error')}
-        this.disabled=false;this.textContent='Uninstall';
-      });
+      btn.addEventListener('click',function(){uninstallSoftware(this.dataset.soft)});
     });
   }catch(e){
     if(e.message!=='Unauthorized')document.getElementById('installer-list').innerHTML='<div class="error-msg">Error: '+e.message+'</div>';
   }
+}
 
+function installSoftware(soft){
+  const m=openModal(`
+    <h3>Install ${escapeHtml(soft)}</h3>
+    <div class="field">
+      <label>Version</label>
+      <input type="text" id="inst-version" placeholder="latest">
+    </div>
+    <div class="error-msg" id="inst-err" style="display:none"></div>
+    <div class="btn-row">
+      <button class="btn btn-sm btn-ghost" id="inst-cancel">Cancel</button>
+      <button class="btn btn-sm btn-success" id="inst-go">Install</button>
+    </div>`,{maxWidth:'400px'});
+  m.root.querySelector('#inst-cancel').addEventListener('click',m.close);
+  m.root.querySelector('#inst-go').addEventListener('click',async()=>{
+    const version=m.root.querySelector('#inst-version').value.trim();
+    const btn=m.root.querySelector('#inst-go');
+    const err=m.root.querySelector('#inst-err');
+    btn.disabled=true;btn.textContent='Installing...';err.style.display='none';
+    try{
+      const r=await api('/installer/install',{method:'POST',body:JSON.stringify({software:soft,version:version||undefined})});
+      if(r.success){showToast(soft+' installed successfully','success');m.close()}
+      else{err.textContent=r.message||'Install failed';err.style.display='block';btn.disabled=false;btn.textContent='Install'}
+    }catch(e){
+      if(e.message==='Unauthorized'){m.close();return}
+      err.textContent='Error: '+e.message;err.style.display='block';btn.disabled=false;btn.textContent='Install';
+    }
+  });
+}
+
+function uninstallSoftware(soft){
+  confirmDialog({
+    title:'Uninstall '+soft,
+    message:'Are you sure you want to uninstall '+soft+'?',
+    okText:'Uninstall',danger:true,loadingText:'Uninstalling...',
+    onConfirm:async()=>{
+      const r=await api('/installer/uninstall',{method:'POST',body:JSON.stringify({software:soft})});
+      if(!r.success)throw new Error(r.message||'Uninstall failed');
+      showToast(soft+' uninstalled successfully','success');
+    }
+  });
 }
