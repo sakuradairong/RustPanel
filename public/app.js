@@ -18,7 +18,7 @@ function render(route){
   if(route==='/monitor')return layout(renderMonitor,route);
   if(route==='/webserver')return layout(renderWebServer,route);
   if(route==='/firewall')return layout(renderFirewall,route);
-  if(route==='/installer')return layout(renderInstaller,route);
+  if(route==='/installer'||route==='/appstore'||route==='/apps')return layout(renderInstaller,route);
   layout(renderDashboard,route);
 }
 
