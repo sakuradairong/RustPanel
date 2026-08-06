@@ -275,7 +275,9 @@ function renderDockerCreate(dc){
     <h3>Create Container</h3>
     <div class="field"><label>Image</label><input type="text" id="dc-img" placeholder="nginx:latest"></div>
     <div class="field"><label>Name</label><input type="text" id="dc-name" placeholder="my-nginx"></div>
-    <div class="field"><label>Command</label><input type="text" id="dc-cmd" placeholder="optional"></div>
+    <div class="field"><label>Ports <span class="text-dim" style="font-weight:400">(host:container, comma-separated)</span></label><input type="text" id="dc-ports" placeholder="8080:80, 5432:5432/tcp"></div>
+    <div class="field"><label>Environment <span class="text-dim" style="font-weight:400">(KEY=VALUE, one per line)</span></label><textarea id="dc-env" rows="3" placeholder="TZ=UTC&#10;DEBUG=1" style="resize:vertical"></textarea></div>
+    <div class="field"><label>Command <span class="text-dim" style="font-weight:400">(optional)</span></label><input type="text" id="dc-cmd" placeholder="optional"></div>
     <div id="dc-err" class="error-msg" style="display:none"></div>
     <div class="btn-row">
       <button class="btn btn-sm btn-ghost" id="dc-c-back">Cancel</button>
@@ -286,6 +288,8 @@ function renderDockerCreate(dc){
     const img=m.root.querySelector('#dc-img').value.trim();
     const nm=m.root.querySelector('#dc-name').value.trim();
     const cmdStr=m.root.querySelector('#dc-cmd').value.trim();
+    const portsStr=m.root.querySelector('#dc-ports').value.trim();
+    const envStr=m.root.querySelector('#dc-env').value.trim();
     const err=m.root.querySelector('#dc-err');
     if(!img||!nm){err.textContent='Image and name required';err.style.display='block';return}
     err.style.display='none';
@@ -293,6 +297,10 @@ function renderDockerCreate(dc){
     try{
       const body={name:nm,image:img};
       if(cmdStr)body.cmd=cmdStr.split(/\s+/);
+      const ports=portsStr.split(/[\n,]+/).map(s=>s.trim()).filter(Boolean);
+      if(ports.length)body.ports=ports;
+      const env=envStr.split(/\n+/).map(s=>s.trim()).filter(Boolean);
+      if(env.length)body.env=env;
       const r=await api('/docker/containers',{method:'POST',body:JSON.stringify(body)});
       if(r.success){
         showToast('Created: '+nm,'success');
