@@ -44,6 +44,8 @@ pub async fn os_info(_: AuthUser) -> HttpResponse {
         }))
     }
 
+    let load = System::load_average();
+
     let mut network_info: Vec<serde_json::Value> = Vec::new();
     for (interface_name, data) in &Networks::new_with_refreshed_list() {
         if interface_name.to_string().contains("NPCAP") {
@@ -73,6 +75,11 @@ pub async fn os_info(_: AuthUser) -> HttpResponse {
                 "used":sys.used_memory()/1048576,
             },
             "cpu":cpu_info,
+            "load":{
+                "one":load.one,
+                "five":load.five,
+                "fifteen":load.fifteen,
+            },
             "disk":disk_info,
             "network":network_info
         })),

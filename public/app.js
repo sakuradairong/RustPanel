@@ -18,7 +18,7 @@ function render(route){
   if(route==='/monitor')return layout(renderMonitor,route);
   if(route==='/webserver')return layout(renderWebServer,route);
   if(route==='/firewall')return layout(renderFirewall,route);
-  if(route==='/installer')return layout(renderInstaller,route);
+  if(route==='/installer'||route==='/appstore'||route==='/apps')return layout(renderInstaller,route);
   layout(renderDashboard,route);
 }
 
@@ -28,7 +28,14 @@ function layout(pageFn,route){
   $app.innerHTML='<div id="sidebar"></div><div id="sidebar-overlay"></div><div id="main"><div id="topbar"></div><div id="content"></div></div>';
   renderSidebar(route);
   renderTopbar(route);
+  document.getElementById('sidebar-overlay')?.addEventListener('click',closeSidebar);
   pageFn(route);
+}
+
+// Collapse the mobile sidebar + its overlay (no-op on desktop where it's static).
+function closeSidebar(){
+  document.getElementById('sidebar')?.classList.remove('open');
+  document.getElementById('sidebar-overlay')?.classList.remove('show');
 }
 
 // ── Sidebar ──
@@ -92,7 +99,7 @@ function renderSidebar(activeRoute){
     }
     nav.innerHTML=html;
     sb.querySelectorAll('.nav-item[data-route]').forEach(el=>{
-      el.addEventListener('click',()=>navigate(el.dataset.route));
+      el.addEventListener('click',()=>{navigate(el.dataset.route);closeSidebar()});
     });
     sb.querySelectorAll('.group-title').forEach(el=>{
       el.addEventListener('click',function(){
@@ -135,8 +142,16 @@ function renderTopbar(route){
   const baseRoute=route.split('?')[0];
   let title=pageNames[baseRoute]||'RustPanel';
   if(baseRoute.startsWith('/file/view'))title='File Viewer';
-  tb.innerHTML=`<button id="sidebar-toggle" aria-label="Menu">☰</button><span class="page-title">${title}</span><div class="user-info"><span class="username">${userInfo.username||'User'}</span><button class="logout-btn" id="logout-btn">Logout</button></div>`;
-  document.getElementById('logout-btn')?.addEventListener('click',()=>{clearToken();cachedMenus=null;navigate('/login')});
+  const uname=userInfo.username||'User';
+  tb.innerHTML=`<button id="sidebar-toggle" aria-label="Menu">☰</button><span class="page-title">${escapeHtml(title)}</span><div class="user-info"><span class="avatar" aria-hidden="true">${escapeHtml(initials(uname))}</span><span class="username">${escapeHtml(uname)}</span><button class="logout-btn" id="logout-btn"><span class="icon" aria-hidden="true">⎋</span>Logout</button></div>`;
+  document.getElementById('logout-btn')?.addEventListener('click',()=>{
+    confirmDialog({
+      title:'Sign Out',
+      message:'Are you sure you want to sign out?',
+      okText:'Sign Out',okClass:'btn-danger',
+      onConfirm:()=>{clearToken();cachedMenus=null;navigate('/login')}
+    });
+  });
   document.getElementById('sidebar-toggle')?.addEventListener('click',()=>{
     const sb=document.getElementById('sidebar');
     if(sb)sb.classList.toggle('open');
@@ -159,7 +174,10 @@ function renderLogin(){
       </div>
       <div class="field">
         <label for="login-password">Password</label>
-        <input type="password" id="login-password" autocomplete="current-password" placeholder="Enter password">
+        <div class="pw-field">
+          <input type="password" id="login-password" autocomplete="current-password" placeholder="Enter password">
+          <button type="button" class="pw-toggle" id="login-pw-toggle" aria-label="Show password">👁</button>
+        </div>
       </div>
       <button class="btn login-btn" id="login-btn">Sign In</button>
       <div class="loading-bar" id="login-loading"></div>
@@ -172,10 +190,25 @@ function renderLogin(){
   const btn=document.getElementById('login-btn');
   const unEl=document.getElementById('login-username');
   const pwEl=document.getElementById('login-password');
+  const pwToggle=document.getElementById('login-pw-toggle');
   const loadingEl=document.getElementById('login-loading');
 
   function showErr(msg){errEl.textContent=msg;errEl.classList.add('show')}
   function hideErr(){errEl.classList.remove('show')}
+
+  // Show/hide password
+  pwToggle?.addEventListener('click',()=>{
+    const reveal=pwEl.type==='password';
+    pwEl.type=reveal?'text':'password';
+    pwToggle.textContent=reveal?'🙈':'👁';
+    pwToggle.setAttribute('aria-label',reveal?'Hide password':'Show password');
+    pwEl.focus();
+  });
+
+  // Remember the last username and focus the most useful field.
+  const lastUser=localStorage.getItem('lastUsername')||'';
+  if(lastUser){unEl.value=lastUser;setTimeout(()=>pwEl.focus(),0)}
+  else setTimeout(()=>unEl.focus(),0);
 
   async function doLogin(){
     hideErr();
@@ -198,6 +231,7 @@ function renderLogin(){
       if(j.success&&j.data&&j.data.token){
         setToken(j.data.token);
         if(j.data.user)localStorage.setItem('user',JSON.stringify(j.data.user));
+        localStorage.setItem('lastUsername',username);
         cachedMenus=null;
         navigate('/home');
       } else {
@@ -210,55 +244,115 @@ function renderLogin(){
     }catch(e){
       if(e.message==='Unauthorized')return;
       showErr('Connection error: '+e.message);
+      showToast('Connection error: '+e.message,'error');
     }finally{
       btn.disabled=false;btn.textContent='Sign In';loadingEl.classList.remove('show');
     }
   }
 
   btn.addEventListener('click',doLogin);
+  unEl.addEventListener('keydown',e=>{if(e.key==='Enter')doLogin()});
   pwEl.addEventListener('keydown',e=>{if(e.key==='Enter')doLogin()});
 }
 
 // ── Dashboard ──
 let dashboardEventSource=null;
+
+// ── 1Panel-style ring gauges ──
+const GAUGE_C=314.159; // 2*pi*r, r=50
+function gaugeCard(id,title){
+  return `<div class="card gauge">
+    <div class="gauge-title">${title}</div>
+    <div class="gauge-ring">
+      <svg viewBox="0 0 120 120"><circle class="gauge-track" cx="60" cy="60" r="50"></circle>
+      <circle class="gauge-arc" id="${id}-arc" cx="60" cy="60" r="50" stroke-dasharray="${GAUGE_C}" stroke-dashoffset="${GAUGE_C}"></circle></svg>
+      <div class="gauge-center" id="${id}-val">—</div>
+    </div>
+    <div class="gauge-sub" id="${id}-sub">&nbsp;</div>
+  </div>`;
+}
+function gaugeColor(pct){return pct>85?'var(--error)':pct>60?'var(--warning)':'var(--success)'}
+function setGauge(id,fillPct,color,centerText,sub){
+  const p=Math.min(Math.max(fillPct,0),100);
+  const arc=document.getElementById(id+'-arc');
+  if(arc){arc.style.strokeDashoffset=(GAUGE_C*(1-p/100)).toFixed(2);arc.style.stroke=color}
+  const val=document.getElementById(id+'-val');
+  if(val){val.textContent=centerText;val.style.color=color}
+  const subEl=document.getElementById(id+'-sub');
+  if(subEl)subEl.textContent=sub;
+}
+function updateGauges(s,coreCount){
+  const cpu=s.cpu||0;
+  const memUsed=s.memory?s.memory.used:0,memTotal=s.memory?s.memory.total:1;
+  const swUsed=s.swap?s.swap.used:0,swTotal=s.swap?s.swap.total:0;
+  const memPct=memTotal?(memUsed/memTotal)*100:0;
+  const swPct=swTotal?(swUsed/swTotal)*100:0;
+  const l1=s.load?s.load.one:0,l5=s.load?s.load.five:0,l15=s.load?s.load.fifteen:0;
+  const loadPct=coreCount?Math.min((l1/coreCount)*100,100):0;
+  setGauge('g-cpu',cpu,gaugeColor(cpu),cpu.toFixed(0)+'%',(coreCount||0)+' cores');
+  setGauge('g-mem',memPct,gaugeColor(memPct),memPct.toFixed(0)+'%',formatSize(memUsed)+' / '+formatSize(memTotal));
+  setGauge('g-swap',swPct,gaugeColor(swPct),swPct.toFixed(0)+'%',swTotal?(formatSize(swUsed)+' / '+formatSize(swTotal)):'No swap');
+  setGauge('g-load',loadPct,gaugeColor(loadPct),l1.toFixed(2),l5.toFixed(2)+' · '+l15.toFixed(2)+' (5m·15m)');
+}
+function formatUptime(sec){
+  sec=Math.max(0,Math.floor(sec));
+  const d=Math.floor(sec/86400),h=Math.floor((sec%86400)/3600),m=Math.floor((sec%3600)/60);
+  if(d>0)return d+'d '+h+'h';
+  if(h>0)return h+'h '+m+'m';
+  return m+'m';
+}
+
 async function renderDashboard(){
   const c=document.getElementById('content');
   if(!c)return;
   cleanupPage();
   if(dashboardEventSource){dashboardEventSource.close();dashboardEventSource=null}
 
-  // Skeletons rendersıs
   c.innerHTML=`
-  <div class="card-grid card-grid-4 mb-4" id="ds-stats">
-    <div class="card stat-card"><div class="label" style="font-size:.72rem;text-transform:uppercase">CPU Usage</div><div class="skeleton skeleton-card" style="height:45px;margin-top:8px"></div></div>
-    <div class="card stat-card"><div class="label" style="font-size:.72rem;text-transform:uppercase">Memory</div><div class="skeleton skeleton-card" style="height:45px;margin-top:8px"></div></div>
-    <div class="card stat-card"><div class="label" style="font-size:.72rem;text-transform:uppercase">Swap</div><div class="skeleton skeleton-card" style="height:45px;margin-top:8px"></div></div>
-    <div class="card stat-card"><div class="label" style="font-size:.72rem;text-transform:uppercase">Kernel</div><div class="skeleton skeleton-card" style="height:45px;margin-top:8px"></div></div>
+  <div class="card ds-overview mb-4" id="ds-overview"><div class="skeleton skeleton-text" style="width:60%"></div></div>
+  <div class="gauge-grid mb-4" id="ds-gauges">
+    ${gaugeCard('g-cpu','CPU')}
+    ${gaugeCard('g-mem','Memory')}
+    ${gaugeCard('g-swap','Swap')}
+    ${gaugeCard('g-load','Load')}
   </div>
-  <div class="card-grid card-grid-2">
-    <div class="card"><h3 class="label" style="font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;font-weight:700;color:var(--text-dim);margin-bottom:.8rem">CPU Usage</h3><div id="ds-cpu-cores"><div class="skeleton skeleton-text"></div><div class="skeleton skeleton-text" style="width:50%"></div></div></div>
-    <div class="card"><h3 class="label" style="font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;font-weight:700;color:var(--text-dim);margin-bottom:.8rem">Memory Usage</h3><div id="ds-memory"><div class="skeleton skeleton-text"></div><div class="skeleton skeleton-text" style="width:50%"></div></div></div>
-  </div>
-  <div class="card mt-4"><h3 class="label" style="font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;font-weight:700;color:var(--text-dim);margin-bottom:.8rem">Disk Usage</h3><div id="ds-disks"><div class="skeleton skeleton-text"></div><div class="skeleton skeleton-text"></div></div></div>
-  <div class="card mt-4"><h3 class="label" style="font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;font-weight:700;color:var(--text-dim);margin-bottom:.8rem">Network Interfaces</h3><div id="ds-network"><div class="skeleton skeleton-text"></div></div></div>`;
+  <div class="card mb-4"><h3 class="ds-h">Disk Usage</h3><div id="ds-disks"><div class="skeleton skeleton-text"></div><div class="skeleton skeleton-text"></div></div></div>
+  <div class="card"><h3 class="ds-h">Network Interfaces</h3><div id="ds-network"><div class="skeleton skeleton-text"></div></div></div>`;
 
   try{
-    // Initial load: static OS info + disk layout
     const j=await api('/os_info');
-    if(!j.success||!j.data){c.querySelector('#ds-cpu-cores').textContent='Failed to load';return}
+    if(!j.success||!j.data){document.getElementById('ds-overview').textContent='Failed to load system info';return}
     const d=j.data;
     const os=d.os||{};
     const mem=d.memory||{};
     const cpus=d.cpu||[];
     const disks=d.disk||[];
     const nets=d.network||[];
+    const load=d.load||{};
     const coreCount=cpus.length;
 
-    // Render static OS info
-    document.getElementById('ds-stats').querySelectorAll('.card.stat-card')[3].innerHTML=
-      '<div class="label">Kernel</div><div class="value" style="color:var(--text);font-size:0.9rem">'+(os.kernel_version||'N/A')+'</div><div class="sub-value">'+(os.host_name||os.hostname||'')+'</div>';
+    // Overview strip: host / OS / kernel / arch / uptime
+    const bootTime=Number(os.boot_time)||0;
+    const nowSec=Number(d.updated_at)||Math.floor(Date.now()/1000);
+    const uptime=bootTime>0?formatUptime(nowSec-bootTime):'—';
+    const osName=(os.name||os.os_type||'Linux')+(os.os_version?(' '+os.os_version):'');
+    document.getElementById('ds-overview').innerHTML=
+      `<div class="ov-item"><span class="ov-k">Host</span><span class="ov-v">${escapeHtml(os.host_name||os.hostname||'—')}</span></div>`+
+      `<div class="ov-item"><span class="ov-k">OS</span><span class="ov-v">${escapeHtml(osName)}</span></div>`+
+      `<div class="ov-item"><span class="ov-k">Kernel</span><span class="ov-v">${escapeHtml(os.kernel_version||'—')}</span></div>`+
+      `<div class="ov-item"><span class="ov-k">Arch</span><span class="ov-v">${escapeHtml(os.architecture||'—')}</span></div>`+
+      `<div class="ov-item"><span class="ov-k">Uptime</span><span class="ov-v">${uptime}</span></div>`;
 
-    // Disk (static - rarely changes)
+    // Initial gauge values from the os_info snapshot (SSE then keeps them live)
+    const cpuAvg=coreCount?cpus.reduce((a,b)=>a+b,0)/coreCount:0;
+    updateGauges({
+      cpu:cpuAvg,
+      memory:{used:(mem.used||0)*1048576,total:(mem.total||1)*1048576},
+      swap:{used:(mem.swap_used||0)*1048576,total:(mem.swap_total||0)*1048576},
+      load:{one:load.one||0,five:load.five||0,fifteen:load.fifteen||0}
+    },coreCount);
+
+    // Disk usage
     let diskHtml='';
     disks.forEach(dd=>{
       const total=dd.total||1;
@@ -272,7 +366,7 @@ async function renderDashboard(){
     });
     document.getElementById('ds-disks').innerHTML=diskHtml||'<div class="text-muted text-sm">No disk data</div>';
 
-    // Network (static - will use SSE for live rates)
+    // Network interfaces (live rates come from SSE deltas)
     if(nets.length>0){
       let netHtml='<div class="table-wrap"><table><thead><tr><th>Interface</th><th>Received</th><th>Transmitted</th></tr></thead><tbody>';
       nets.forEach(n=>{
@@ -284,61 +378,16 @@ async function renderDashboard(){
       document.getElementById('ds-network').innerHTML='<div class="text-muted text-sm">No network data</div>';
     }
 
-    // Store initial network counters for delta calculation
     let prevNet={};
     nets.forEach(n=>{prevNet[n.name]={rx:n.total_received||0,tx:n.total_transmitted||0}});
 
-    // Open SSE for live CPU/Memory/Swap/Network updates
+    // Live updates via SSE: refresh the gauges and per-interface rates.
     const token=getToken();
     dashboardEventSource = new EventSource('/api/v1/monitor?token='+encodeURIComponent(token));
     dashboardEventSource.onmessage=function(ev){
       try{
         const s=JSON.parse(ev.data);
-        const cpuGlobal=s.cpu||0;
-        const memUsed=s.memory?s.memory.used:0;
-        const memTotal=s.memory?s.memory.total:1;
-        const swUsed=s.swap?s.swap.used:0;
-        const swTotal=s.swap?s.swap.total:1;
-        const memPct=((memUsed/memTotal)*100).toFixed(1);
-        const swPct=swTotal>0?((swUsed/swTotal)*100).toFixed(1):'0.0';
-        const cpuColor=cpuGlobal>80?'var(--error)':cpuGlobal>50?'var(--warning)':'var(--success)';
-        const memColor=memPct>80?'var(--error)':memPct>50?'var(--warning)':'var(--primary)';
-        const swColor=swPct>80?'var(--error)':swPct>50?'var(--warning)':'var(--secondary)';
-
-        // Update stat cards
-        const stats=document.getElementById('ds-stats');
-        if(stats){
-          const cards=stats.querySelectorAll('.card.stat-card');
-          cards[0].innerHTML='<div class="stat-card-value">'+cpuGlobal.toFixed(1)+'%</div><div class="stat-card-sub">'+coreCount+' cores</div>';
-          cards[1].innerHTML='<div class="stat-card-value">'+memPct+'%</div><div class="stat-card-sub">'+formatSize(memUsed)+' / '+formatSize(memTotal)+'</div>';
-          cards[2].innerHTML='<div class="stat-card-value">'+swPct+'%</div><div class="stat-card-sub">'+formatSize(swUsed)+' / '+formatSize(swTotal)+'</div>';
-        }
-
-        // CPU bar
-        const cpuEl=document.getElementById('ds-cpu-cores');
-        if(cpuEl){
-          const pct=Math.min(cpuGlobal,100).toFixed(1);
-          const color=pct>80?'red':pct>50?'orange':'green';
-          cpuEl.innerHTML='<div class="cpu-item"><div class="cpu-label"><span>Total</span><span>'+pct+'%</span></div><div class="bar"><div class="fill '+color+'" style="width:'+pct+'%"></div></div></div>';
-        }
-
-        // Memory bar
-        const memEl=document.getElementById('ds-memory');
-        if(memEl){
-          const memPctNum=Math.min(parseFloat(memPct),100);
-          const mColor=memPctNum>80?'red':memPctNum>50?'orange':'blue';
-          let html='<div class="text-sm" style="display:flex;justify-content:space-between;margin-bottom:4px"><span>RAM</span><span>'+formatSize(memUsed)+' / '+formatSize(memTotal)+'</span></div>';
-          html+='<div class="progress-bar"><div class="fill '+mColor+'" style="width:'+memPctNum+'%"></div></div>';
-          if(swTotal>0){
-            const swPctNum=Math.min(parseFloat(swPct),100);
-            const sColor=swPctNum>80?'red':swPctNum>50?'orange':'blue';
-            html+='<div class="text-sm mt-3" style="display:flex;justify-content:space-between;margin-bottom:4px"><span>Swap</span><span>'+formatSize(swUsed)+' / '+formatSize(swTotal)+'</span></div>';
-            html+='<div class="progress-bar"><div class="fill '+sColor+'" style="width:'+swPctNum+'%"></div></div>';
-          }
-          memEl.innerHTML=html;
-        }
-
-        // Network update (delta from previous sample)
+        updateGauges(s,coreCount);
         if(s.network&&Array.isArray(s.network)){
           s.network.forEach(ni=>{
             const rxEl=document.getElementById('net-rx-'+ni.name);
@@ -359,7 +408,7 @@ async function renderDashboard(){
     };
     dashboardEventSource.onerror=function(){/* SSE connection will auto-reconnect */};
   }catch(e){
-    if(e.message!=='Unauthorized')document.getElementById('ds-cpu-cores').textContent='Error: '+e.message;
+    if(e.message!=='Unauthorized'){const ov=document.getElementById('ds-overview');if(ov)ov.textContent='Error: '+e.message}
   }
 }
 
@@ -374,10 +423,40 @@ function formatSize(bytes){
 // ── File Manager ──
 let fileListState={path:'/',page:1};
 
+// Pick an icon for a file by extension.
+function fileIcon(name){
+  const ext=(String(name).split('.').pop()||'').toLowerCase();
+  if(['png','jpg','jpeg','gif','webp','svg','bmp','ico'].indexOf(ext)>=0)return '🖼️';
+  if(['zip','tar','gz','tgz','bz2','xz','rar','7z'].indexOf(ext)>=0)return '🗜️';
+  if(['js','ts','jsx','tsx','rs','go','py','java','c','cpp','h','sh','rb','php','html','css','json','yaml','yml','toml','xml','md'].indexOf(ext)>=0)return '📜';
+  if(['mp4','mkv','mov','avi','webm'].indexOf(ext)>=0)return '🎞️';
+  if(['mp3','wav','flac','ogg'].indexOf(ext)>=0)return '🎵';
+  if(ext==='pdf')return '📕';
+  return '📄';
+}
+
+// Render a clickable breadcrumb for the given absolute path.
+function renderFileBreadcrumb(path){
+  const el=document.getElementById('file-breadcrumb');
+  if(!el)return;
+  const parts=String(path||'/').split('/').filter(Boolean);
+  let acc='';
+  let html='<span class="crumb" data-path="/">🏠 /</span>';
+  parts.forEach(seg=>{
+    acc+='/'+seg;
+    html+='<span class="crumb-sep">/</span><span class="crumb" data-path="'+escapeHtml(acc)+'">'+escapeHtml(seg)+'</span>';
+  });
+  el.innerHTML=html;
+  el.querySelectorAll('.crumb[data-path]').forEach(cr=>{
+    cr.addEventListener('click',()=>{fileListState.path=cr.dataset.path;fileListState.page=1;loadFileList()});
+  });
+}
+
 async function renderFileList(){
   const c=document.getElementById('content');
   if(!c)return;
   c.innerHTML=`
+  <div id="file-breadcrumb" class="file-breadcrumb"></div>
   <div class="file-path">
     <input type="text" id="file-path-input" value="${fileListState.path}" placeholder="/">
     <button class="btn btn-sm" id="file-go-btn">Go</button>
@@ -407,18 +486,22 @@ async function loadFileList(){
     const j=await api('/file/list?path='+encodeURIComponent(path)+'&current='+fileListState.page+'&pageSize=50');
     if(!j.success){container.innerHTML='<div class="error-msg">Failed to load directory</div>';return}
     const d=j.data;
+    const curPath=d.path||path;
+    renderFileBreadcrumb(curPath);
+    const inputEl=document.getElementById('file-path-input');
+    if(inputEl)inputEl.value=curPath;
     let html='<div class="table-wrap"><table class="file-list-table"><thead><tr><th>Name</th><th>Size</th><th>Modified</th></tr></thead><tbody>';
     if(d.path&&d.path!==path){
       const parent=d.path.replace(/\/?[^\/]*\/?$/,'')||'/';
-      html+=`<tr><td class="clickable" data-path="${escapeHtml(parent)}">.. (parent)</td><td></td><td></td></tr>`;
+      html+=`<tr><td class="clickable" data-path="${escapeHtml(parent)}" data-type="dir">↩ .. (parent)</td><td></td><td></td></tr>`;
     }
     (d.dirs||[]).forEach(dir=>{
-      const fullPath=(path.endsWith('/')?path:path+'/')+dir.name;
+      const fullPath=(curPath.endsWith('/')?curPath:curPath+'/')+dir.name;
       html+=`<tr><td class="clickable" data-path="${escapeHtml(fullPath)}" data-type="dir">📁 ${escapeHtml(dir.name)}</td><td></td><td>${dir.modified_time?formatTime(dir.modified_time):''}</td></tr>`;
     });
     (d.files||[]).forEach(f=>{
-      const fullPath=(path.endsWith('/')?path:path+'/')+f.name;
-      html+=`<tr><td class="clickable" data-path="${escapeHtml(fullPath)}" data-type="file">${escapeHtml(f.name)}</td><td>${f.size!=null?formatSize(f.size):''}</td><td>${f.modified_time?formatTime(f.modified_time):''}</td></tr>`;
+      const fullPath=(curPath.endsWith('/')?curPath:curPath+'/')+f.name;
+      html+=`<tr><td class="clickable" data-path="${escapeHtml(fullPath)}" data-type="file">${fileIcon(f.name)} ${escapeHtml(f.name)}</td><td>${f.size!=null?formatSize(f.size):''}</td><td>${f.modified_time?formatTime(f.modified_time):''}</td></tr>`;
     });
     html+='</tbody></table></div>';
     container.innerHTML=html;

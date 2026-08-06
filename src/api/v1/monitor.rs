@@ -48,10 +48,18 @@ struct DiskStats {
 }
 
 #[derive(Serialize)]
+struct LoadStats {
+    one: f64,
+    five: f64,
+    fifteen: f64,
+}
+
+#[derive(Serialize)]
 struct SystemStats {
     cpu: f32,
     memory: MemoryStats,
     swap: SwapStats,
+    load: LoadStats,
     network: Vec<NetworkStats>,
     disks: Vec<DiskStats>,
 }
@@ -92,6 +100,13 @@ fn collect_stats() -> SystemStats {
         total: sys.total_swap(),
     };
 
+    let la = System::load_average();
+    let load = LoadStats {
+        one: la.one,
+        five: la.five,
+        fifteen: la.fifteen,
+    };
+
     let network = Networks::new_with_refreshed_list()
         .into_iter()
         .map(|(name, data)| NetworkStats {
@@ -114,6 +129,7 @@ fn collect_stats() -> SystemStats {
         cpu,
         memory,
         swap,
+        load,
         network,
         disks,
     }
@@ -152,6 +168,9 @@ pub async fn monitor_sse(req: HttpRequest) -> HttpResponse {
                 .insert_header(("Cache-Control", "no-cache"))
                 .insert_header(("Connection", "keep-alive"))
                 .insert_header(("Access-Control-Allow-Origin", "*"))
+                // Prevent the Compress middleware from buffering/compressing the
+                // stream: SSE must be flushed per-event, and brotli/gzip buffers it.
+                .insert_header(("Content-Encoding", "identity"))
                 .streaming(monitor_stream());
         }
     }
