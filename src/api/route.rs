@@ -67,6 +67,7 @@ pub fn v1() -> actix_web::Scope {
                     .service(web::resource("/volumes")
                         .route(web::get().to(v1::docker::list_volumes))
                         .route(web::post().to(v1::docker::create_volume)))
+                    .service(web::resource("/volumes/prune").route(web::post().to(v1::docker::prune_volumes)))
                     .service(web::resource("/volumes/{name}").route(web::get().to(v1::docker::inspect_volume)))
                     .service(web::resource("/volumes/{name}/remove").route(web::post().to(v1::docker::remove_volume)))
             )

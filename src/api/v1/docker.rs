@@ -439,3 +439,19 @@ pub async fn inspect_volume(_: AuthUser, path: web::Path<String>) -> HttpRespons
         }),
     }
 }
+
+pub async fn prune_volumes(_: AuthUser) -> HttpResponse {
+    match volume::prune().await {
+        Ok(result) => HttpResponse::Ok().json(ResponseStructure {
+            success: true,
+            code: 200,
+            message: String::from("success"),
+            data: Some(result),
+        }),
+        Err(err) => HttpResponse::InternalServerError().json(ResponseStructureError {
+            success: false,
+            code: 500,
+            message: err.to_string(),
+        }),
+    }
+}

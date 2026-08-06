@@ -516,9 +516,20 @@ function openDockerExecModal(id,nameHint){
   const m=openModal(`
     <h3>${escapeHtml(title)}</h3>
     <div class="field"><label>Command</label>
-      <input type="text" id="dc-exec-cmd" placeholder="ls -la /" value="uname -a">
+      <input type="text" id="dc-exec-cmd" placeholder="ls -la /" value="uname -a" list="dc-exec-presets">
+      <datalist id="dc-exec-presets">
+        <option value="uname -a"></option>
+        <option value="cat /etc/os-release"></option>
+        <option value="ps aux"></option>
+        <option value="df -h"></option>
+        <option value="env"></option>
+      </datalist>
     </div>
-    <div class="text-xs text-dim" style="margin:-4px 0 8px">Runs via <code>/bin/sh -c</code> inside the container.</div>
+    <div class="text-xs text-dim" style="margin:-4px 0 8px">Runs via <code>/bin/sh -c</code> inside the container. Interactive TTY/WebSocket terminal is not wired yet.</div>
+    <div class="flex justify-between items-center mb-1">
+      <span class="text-sm text-muted">Output</span>
+      <button class="btn btn-xs btn-ghost" id="dc-exec-copy" type="button">Copy</button>
+    </div>
     <pre id="dc-exec-out" class="drawer-pre" style="min-height:120px;max-height:280px">Output will appear here…</pre>
     <div id="dc-exec-err" class="error-msg" style="display:none"></div>
     <div class="btn-row">
@@ -526,6 +537,11 @@ function openDockerExecModal(id,nameHint){
       <button class="btn btn-sm btn-success" id="dc-exec-run">Run</button>
     </div>`,{maxWidth:'560px'});
   m.root.querySelector('#dc-exec-close').onclick=m.close;
+  m.root.querySelector('#dc-exec-copy').onclick=async()=>{
+    const t=m.root.querySelector('#dc-exec-out').textContent||'';
+    try{await navigator.clipboard.writeText(t);showToast('Copied','success')}
+    catch(e){showToast('Copy failed','error')}
+  };
   const run=async()=>{
     const cmd=m.root.querySelector('#dc-exec-cmd').value.trim();
     const out=m.root.querySelector('#dc-exec-out');
@@ -675,19 +691,38 @@ async function renderDockerImages(dc){
     document.getElementById('di-search').oninput=function(){diFilterQ=this.value;paint()};
     document.getElementById('di-pull').onclick=()=>renderDockerPull(dc);
     document.getElementById('di-prune').onclick=()=>{
-      confirmDialog({
-        title:'Prune Images',
-        messageHtml:'Remove <strong>dangling</strong> (unused untagged) images? This cannot be undone.',
-        okText:'Prune',danger:true,loadingText:'Pruning...',
-        onConfirm:async()=>{
-          const r=await api('/docker/images/prune',{method:'POST',body:JSON.stringify({dangling_only:true})});
+      const m=openModal(`
+        <h3>Prune Images</h3>
+        <p style="color:var(--text-muted);font-size:.9rem;margin-bottom:1rem">Choose what to clean up. This cannot be undone.</p>
+        <div class="field"><label>Scope</label>
+          <select id="di-prune-scope">
+            <option value="dangling">Dangling only (untagged unused)</option>
+            <option value="all">All unused images</option>
+          </select>
+        </div>
+        <div id="di-prune-err" class="error-msg" style="display:none"></div>
+        <div class="btn-row">
+          <button class="btn btn-sm btn-ghost" id="di-prune-cancel">Cancel</button>
+          <button class="btn btn-sm btn-danger" id="di-prune-go">Prune</button>
+        </div>`,{maxWidth:'440px'});
+      m.root.querySelector('#di-prune-cancel').onclick=m.close;
+      m.root.querySelector('#di-prune-go').onclick=async function(){
+        const dangling=m.root.querySelector('#di-prune-scope').value!=='all';
+        const err=m.root.querySelector('#di-prune-err');
+        err.style.display='none';this.disabled=true;this.textContent='Pruning…';
+        try{
+          const r=await api('/docker/images/prune',{method:'POST',body:JSON.stringify({dangling_only:dangling})});
           if(!r.success)throw new Error(r.message||'Prune failed');
           const d=r.data||{};
           const freed=d.space_reclaimed!=null?formatSize(d.space_reclaimed):'0 B';
           showToast('Pruned '+(d.deleted||0)+' · freed '+freed,'success');
-          renderDockerImages(dc);
+          m.close();renderDockerImages(dc);
+        }catch(e){
+          if(e.message==='Unauthorized'){m.close();return}
+          err.textContent=e.message;err.style.display='block';
+          this.disabled=false;this.textContent='Prune';
         }
-      });
+      };
     };
     paint();
   }catch(e){if(e.message!=='Unauthorized')dc.innerHTML='<div class="error-msg">Error: '+e.message+'</div>'}
@@ -796,40 +831,67 @@ async function renderDockerVolumes(dc){
     const j=await api('/docker/volumes');
     if(!j.success){dc.innerHTML='<div class="error-msg">Failed</div>';return}
     const list=j.data||[];if(!Array.isArray(list)){dc.innerHTML='<div class="error-msg">Invalid</div>';return}
-    let html='<div class="flex justify-between items-center mb-3"><span style="font-size:0.85rem;color:var(--text-dim)">'+list.length+' volume(s)</span><button class="btn btn-sm btn-success" id="dv-add">+ Create</button></div>';
+    dc.innerHTML=`<div class="dk-toolbar">
+      <div class="dk-toolbar-left">
+        <span class="text-sm text-muted" id="dv-count">${list.length} volume(s)</span>
+      </div>
+      <div class="dk-toolbar-right">
+        <button class="btn btn-sm btn-ghost" id="dv-prune" title="Remove unused volumes">Prune</button>
+        <button class="btn btn-sm btn-success" id="dv-add">+ Create</button>
+      </div>
+    </div>
+    <div id="dv-body"></div>`;
+    const body=document.getElementById('dv-body');
     if(list.length===0){
-      html+='<div class="empty-state"><div class="icon">💾</div><div>No volumes</div></div>';
-      dc.innerHTML=html;document.getElementById('dv-add').onclick=()=>renderDockerVolumeCreate(dc);return;
+      body.innerHTML='<div class="empty-state"><div class="icon">💾</div><div>No volumes</div></div>';
+    } else {
+      let html='<div class="dk-grid">';
+      list.forEach(v=>{
+        const nm=v.name||'';
+        const mp=v.mountpoint||'';
+        const sz=v.size>0?formatSize(v.size):'—';
+        html+=`<div class="dk-card">
+          <div class="dk-card-head">
+            <div class="dk-name" title="${escapeHtml(nm)}">${escapeHtml(nm)}</div>
+            <span class="app-cat">${escapeHtml(v.driver||'local')}</span>
+          </div>
+          <div class="dk-meta">
+            <div class="dk-row"><span class="dk-k">Scope</span><span class="dk-v">${escapeHtml(v.scope||'—')}</span></div>
+            <div class="dk-row"><span class="dk-k">Size</span><span class="dk-v">${sz}</span></div>
+            <div class="dk-row"><span class="dk-k">Mount</span><span class="dk-v mono" title="${escapeHtml(mp)}">${escapeHtml(mp||'—')}</span></div>
+          </div>
+          <div class="dk-actions">
+            <button class="btn btn-xs btn-danger dv-rm" data-name="${escapeHtml(nm)}" title="Remove">🗑 Remove</button>
+          </div>
+        </div>`;
+      });
+      html+='</div>';
+      body.innerHTML=html;
+      body.querySelectorAll('.dv-rm').forEach(btn=>{btn.onclick=function(){
+        const n=this.dataset.name;
+        confirmDialog({title:'Remove Volume',messageHtml:'Remove volume <strong>'+escapeHtml(n)+'</strong>?',okText:'Remove',danger:true,loadingText:'Removing...',onConfirm:async()=>{
+          const r=await api('/docker/volumes/'+encodeURIComponent(n)+'/remove',{method:'POST'});
+          if(!r.success)throw new Error(r.message||'Remove failed');
+          showToast('Removed','success');renderDockerVolumes(dc);
+        }});
+      };});
     }
-    html+='<div class="dk-grid">';
-    list.forEach(v=>{
-      const nm=v.name||'';
-      const mp=v.mountpoint||'';
-      html+=`<div class="dk-card">
-        <div class="dk-card-head">
-          <div class="dk-name" title="${escapeHtml(nm)}">${escapeHtml(nm)}</div>
-          <span class="app-cat">${escapeHtml(v.driver||'local')}</span>
-        </div>
-        <div class="dk-meta">
-          <div class="dk-row"><span class="dk-k">Scope</span><span class="dk-v">${escapeHtml(v.scope||'—')}</span></div>
-          <div class="dk-row"><span class="dk-k">Mount</span><span class="dk-v mono" title="${escapeHtml(mp)}">${escapeHtml(mp||'—')}</span></div>
-        </div>
-        <div class="dk-actions">
-          <button class="btn btn-xs btn-danger dv-rm" data-name="${escapeHtml(nm)}" title="Remove">🗑 Remove</button>
-        </div>
-      </div>`;
-    });
-    html+='</div>';
-    dc.innerHTML=html;
     document.getElementById('dv-add').onclick=()=>renderDockerVolumeCreate(dc);
-    dc.querySelectorAll('.dv-rm').forEach(btn=>{btn.onclick=function(){
-      const n=this.dataset.name;
-      confirmDialog({title:'Remove Volume',messageHtml:'Remove volume <strong>'+escapeHtml(n)+'</strong>?',okText:'Remove',danger:true,loadingText:'Removing...',onConfirm:async()=>{
-        const r=await api('/docker/volumes/'+encodeURIComponent(n)+'/remove',{method:'POST'});
-        if(!r.success)throw new Error(r.message||'Remove failed');
-        showToast('Removed','success');renderDockerVolumes(dc);
-      }});
-    };});
+    document.getElementById('dv-prune').onclick=()=>{
+      confirmDialog({
+        title:'Prune Volumes',
+        messageHtml:'Remove all <strong>unused</strong> volumes? This cannot be undone.',
+        okText:'Prune',danger:true,loadingText:'Pruning...',
+        onConfirm:async()=>{
+          const r=await api('/docker/volumes/prune',{method:'POST',body:'{}'});
+          if(!r.success)throw new Error(r.message||'Prune failed');
+          const d=r.data||{};
+          const freed=d.space_reclaimed!=null?formatSize(d.space_reclaimed):'0 B';
+          showToast('Pruned '+(d.deleted||0)+' · freed '+freed,'success');
+          renderDockerVolumes(dc);
+        }
+      });
+    };
   }catch(e){if(e.message!=='Unauthorized')dc.innerHTML='<div class="error-msg">Error: '+e.message+'</div>'}
 }
 function renderDockerVolumeCreate(dc){
@@ -1670,6 +1732,7 @@ async function renderWebServerTab(tab){
   else if(tab==='create')renderWebServerCreate(tc);
   else if(tab==='ssl')renderWebServerSsl(tc);
   else if(tab==='config')renderWebServerConfig(tc);
+}
 
 async function renderWebServerSites(tc){
   tc.innerHTML='<div style="text-align:center;padding:2rem;color:var(--text-dim)">Loading sites...</div>';
@@ -1678,35 +1741,64 @@ async function renderWebServerSites(tc){
     if(!j.success){tc.innerHTML='<div class="error-msg">Failed to load sites</div>';return}
     const sites=j.data||[];
     if(!Array.isArray(sites)){tc.innerHTML='<div class="error-msg">Invalid site data</div>';return}
-    let html='<div class="card"><div class="table-wrap"><table><thead><tr><th>Server Name</th><th>Listen</th><th>Proxy / Root</th><th>SSL</th><th>Status</th><th>Actions</th></tr></thead><tbody>';
-    sites.forEach(s=>{
-      const displayName=s.server_name||s.name||'';
-      const fileName=s.name||'';
-      const listen=s.listen||'80';
-      const proxy=s.proxy_pass||s.root||s.document_root||'';
-      const enabled=s.enabled!=null?s.enabled:true;
-      const ssl=s.ssl?'Yes':'No';
-      html+=`<tr>
-        <td>${escapeHtml(displayName)}</td>
-        <td style="font-family:monospace;font-size:0.8rem">${escapeHtml(listen)}</td>
-        <td style="color:var(--text-muted);font-size:0.8rem;max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(proxy)}</td>
-        <td>${ssl==='Yes'?'🔒':''}</td>
-        <td><span class="status-badge ${enabled?'running':'exited'}" id="status-${escapeHtml(fileName)}">${enabled?'Enabled':'Disabled'}</span></td>
-        <td style="white-space:nowrap">
-          <button class="btn btn-sm ${enabled?'btn-warning':'btn-success'} site-toggle-btn" data-name="${escapeHtml(fileName)}" data-enable="${enabled?'false':'true'}">${enabled?'Disable':'Enable'}</button>
-          <button class="btn btn-sm btn-danger site-delete-btn" data-name="${escapeHtml(fileName)}">Delete</button>
-        </td>
-      </tr>`;
-    });
-    html+='</tbody></table></div></div>';
-    tc.innerHTML=html;
+    let html=`<div class="dk-toolbar">
+      <div class="dk-toolbar-left"><span class="text-sm text-muted">${sites.length} site(s)</span></div>
+      <div class="dk-toolbar-right">
+        <button class="btn btn-sm btn-ghost" id="ws-sites-reload">Reload Nginx</button>
+        <button class="btn btn-sm btn-ghost" id="ws-sites-refresh">⟳ Refresh</button>
+      </div>
+    </div>`;
+    if(sites.length===0){
+      html+='<div class="empty-state"><div class="icon">🌐</div><div>No sites yet — create one from the Create Site tab</div></div>';
+      tc.innerHTML=html;
+    } else {
+      html+='<div class="dk-grid">';
+      sites.forEach(s=>{
+        const displayName=s.server_name||s.name||'';
+        const fileName=s.name||'';
+        const listen=String(s.listen||'80');
+        const proxy=s.proxy_pass||'';
+        const root=s.root||s.document_root||'';
+        const target=proxy||root||'—';
+        const enabled=s.enabled!=null?s.enabled:true;
+        const ssl=!!s.ssl;
+        const path=s.path||'';
+        html+=`<div class="dk-card">
+          <div class="dk-card-head">
+            <div class="dk-name" title="${escapeHtml(displayName)}">${escapeHtml(displayName)}</div>
+            <span class="status-badge ${enabled?'running':'exited'}">${enabled?'Enabled':'Disabled'}</span>
+          </div>
+          <div class="dk-meta">
+            <div class="dk-row"><span class="dk-k">Listen</span><span class="dk-v mono">${escapeHtml(listen)}</span></div>
+            <div class="dk-row"><span class="dk-k">${proxy?'Proxy':'Root'}</span><span class="dk-v" title="${escapeHtml(target)}">${escapeHtml(target)}</span></div>
+            <div class="dk-row"><span class="dk-k">SSL</span><span class="dk-v">${ssl?'Yes':'No'}</span></div>
+            <div class="dk-row"><span class="dk-k">File</span><span class="dk-v mono" title="${escapeHtml(path||fileName)}">${escapeHtml(fileName)}</span></div>
+          </div>
+          <div class="dk-actions">
+            <button class="btn btn-xs ${enabled?'btn-warning':'btn-success'} site-toggle-btn" data-name="${escapeHtml(fileName)}" data-enable="${enabled?'false':'true'}">${enabled?'Disable':'Enable'}</button>
+            <button class="btn btn-xs btn-danger site-delete-btn" data-name="${escapeHtml(fileName)}">Delete</button>
+          </div>
+        </div>`;
+      });
+      html+='</div>';
+      tc.innerHTML=html;
+    }
+    document.getElementById('ws-sites-refresh').onclick=()=>renderWebServerSites(tc);
+    document.getElementById('ws-sites-reload').onclick=async function(){
+      this.disabled=true;const orig=this.textContent;this.textContent='Reloading…';
+      try{
+        const r=await api('/webserver/reload',{method:'POST'});
+        if(r.success){showToast('Nginx reloaded','success');loadWebServerStatus()}
+        else showToast(r.message||'Reload failed','error');
+      }catch(e){if(e.message!=='Unauthorized')showToast('Error: '+e.message,'error')}
+      this.disabled=false;this.textContent=orig;
+    };
     tc.querySelectorAll('.site-toggle-btn').forEach(btn=>{
       btn.addEventListener('click',async function(){
         const name=this.dataset.name;
         const enable=this.dataset.enable==='true';
         const action=enable?'enable':'disable';
-        this.disabled=true;
-        this.textContent='...';
+        this.disabled=true;this.textContent='…';
         try{
           const r=await api('/webserver/sites/'+encodeURIComponent(name)+'/'+action,{method:'POST'});
           if(r.success){showToast('Site '+(enable?'enabled':'disabled'),'success');renderWebServerSites(tc)}
@@ -1715,33 +1807,13 @@ async function renderWebServerSites(tc){
       });
     });
     tc.querySelectorAll('.site-delete-btn').forEach(btn=>{
-      btn.addEventListener('click',async function(){
+      btn.addEventListener('click',function(){
         const name=this.dataset.name;
-        const overlay=document.createElement('div');
-        overlay.className='modal-overlay';
-        overlay.innerHTML=`
-        <div class="modal" style="max-width:380px">
-          <h3>Confirm Delete</h3>
-          <p style="color:var(--text-muted);font-size:0.9rem;margin-bottom:1rem">Delete site <strong>${escapeHtml(name)}</strong>?</p>
-          <div class="btn-row">
-            <button class="btn btn-sm" id="modal-cancel-btn">Cancel</button>
-            <button class="btn btn-sm btn-danger" id="modal-confirm-btn">Delete</button>
-          </div>
-        </div>`;
-        document.body.appendChild(overlay);
-        function closeOverlay(){overlay.remove()}
-        document.getElementById('modal-cancel-btn').addEventListener('click',closeOverlay);
-        overlay.addEventListener('click',e=>{if(e.target===overlay)closeOverlay()});
-        document.getElementById('modal-confirm-btn').addEventListener('click',async()=>{
-          const confirmBtn=document.getElementById('modal-confirm-btn');
-          confirmBtn.disabled=true;confirmBtn.textContent='Deleting...';
-          try{
-            const r=await api('/webserver/sites/'+encodeURIComponent(name),{method:'DELETE'});
-            if(r.success){showToast('Site deleted','success');closeOverlay();renderWebServerSites(tc)}
-            else showToast(r.message||'Delete failed','error');
-          }catch(e){if(e.message!=='Unauthorized')showToast('Error: '+e.message,'error')}
-          confirmBtn.disabled=false;confirmBtn.textContent='Delete';
-        });
+        confirmDialog({title:'Delete Site',messageHtml:'Delete site <strong>'+escapeHtml(name)+'</strong>?',okText:'Delete',danger:true,loadingText:'Deleting...',onConfirm:async()=>{
+          const r=await api('/webserver/sites/'+encodeURIComponent(name),{method:'DELETE'});
+          if(!r.success)throw new Error(r.message||'Delete failed');
+          showToast('Site deleted','success');renderWebServerSites(tc);
+        }});
       });
     });
   }catch(e){
@@ -1758,15 +1830,21 @@ function renderWebServerCreate(tc){
         <input type="text" id="ws-server-name" placeholder="example.com">
       </div>
       <div class="field">
-        <label>Root Directory</label>
-        <input type="text" id="ws-root" placeholder="/var/www/example">
+        <label>Listen Port</label>
+        <input type="number" id="ws-listen" min="1" max="65535" value="80" placeholder="80">
       </div>
     </div>
     <div class="form-row">
       <div class="field">
+        <label>Root Directory</label>
+        <input type="text" id="ws-root" placeholder="/var/www/example">
+      </div>
+      <div class="field">
         <label>Proxy Pass (optional)</label>
         <input type="text" id="ws-proxy-pass" placeholder="http://127.0.0.1:3000">
       </div>
+    </div>
+    <div class="form-row">
       <div class="field">
         <label>SSL</label>
         <select id="ws-ssl">
@@ -1775,10 +1853,10 @@ function renderWebServerCreate(tc){
           <option value="custom">Custom</option>
         </select>
       </div>
-    </div>
-    <div class="field">
-      <label>Index Files</label>
-      <input type="text" id="ws-index" placeholder="index.html index.htm" value="index.html index.htm">
+      <div class="field">
+        <label>Index Files</label>
+        <input type="text" id="ws-index" placeholder="index.html index.htm" value="index.html index.htm">
+      </div>
     </div>
     <div class="field">
       <label>Custom Config (optional)</label>
@@ -1790,6 +1868,7 @@ function renderWebServerCreate(tc){
 
   document.getElementById('ws-create-btn').addEventListener('click',async()=>{
     const name=document.getElementById('ws-server-name').value.trim();
+    const listen=parseInt(document.getElementById('ws-listen').value,10)||80;
     const root=document.getElementById('ws-root').value.trim();
     const proxyPass=document.getElementById('ws-proxy-pass').value.trim();
     const ssl=document.getElementById('ws-ssl').value;
@@ -1804,7 +1883,7 @@ function renderWebServerCreate(tc){
     const btn=document.getElementById('ws-create-btn');
     btn.disabled=true;btn.textContent='Creating...';
     try{
-      const body={server_name:name,root,proxy_pass:proxyPass,ssl,index,extra_config:customConfig};
+      const body={server_name:name,listen,root,proxy_pass:proxyPass,ssl,index,extra_config:customConfig};
       const r=await api('/webserver/sites',{method:'POST',body:JSON.stringify(body)});
       if(r.success){
         showToast('Site created','success');
@@ -2152,9 +2231,6 @@ async function renderWebServerSslIssue(tc,providers){
     }
   });
 }
-}
-
-
 
 // ── SSL Upload Certificate ──
 function renderWebServerSslUpload(tc){
