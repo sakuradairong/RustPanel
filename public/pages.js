@@ -311,24 +311,44 @@ async function renderDockerImages(dc){
     const j=await api('/docker/images');
     if(!j.success){dc.innerHTML='<div class="error-msg">Failed</div>';return}
     const list=j.data||[];if(!Array.isArray(list)){dc.innerHTML='<div class="error-msg">Invalid</div>';return}
-    let html='<div class="flex justify-between items-center mb-2"><span style="font-size:0.85rem;color:var(--text-dim)">'+list.length+' image(s)</span><button class="btn btn-sm btn-success" id="di-pull">+ Pull</button></div>';
-    html+='<div class="card"><div class="table-wrap"><table><thead><tr><th>Repository</th><th>Tag</th><th>ID</th><th>Size</th><th>Actions</th></tr></thead><tbody>';
+    let html='<div class="flex justify-between items-center mb-3"><span style="font-size:0.85rem;color:var(--text-dim)">'+list.length+' image(s)</span><button class="btn btn-sm btn-success" id="di-pull">+ Pull</button></div>';
+    if(list.length===0){
+      html+='<div class="empty-state"><div class="icon">📦</div><div>No images yet</div></div>';
+      dc.innerHTML=html;document.getElementById('di-pull').onclick=()=>renderDockerPull(dc);return;
+    }
+    html+='<div class="dk-grid">';
     list.forEach(img=>{
       const tags=img.repo_tags||[];
+      const full=tags.length>0?tags[0]:'<none>:<none>';
       const repo=tags.length>0?(tags[0].split(':')[0]||'<none>'):'<none>';
-      const tag=tags.length>0?(tags[0].split(':')[1]||'<none>'):'<none>';
-      const sid=(img.id||'').substring(0,12);
+      const tag=tags.length>0?(tags[0].split(':')[1]||'latest'):'<none>';
+      const sid=(img.id||'').replace('sha256:','').substring(0,12);
       const sz=img.size||0;
       const szStr=sz>1073741824?(sz/1073741824).toFixed(2)+' GB':sz>1048576?(sz/1048576).toFixed(1)+' MB':(sz/1024).toFixed(0)+' KB';
-      html+=`<tr><td>${escapeHtml(repo)}</td><td style="color:var(--text-dim)">${escapeHtml(tag)}</td><td style="font-family:monospace;font-size:0.8rem;color:var(--text-muted)">${sid}</td><td style="font-size:0.8rem">${szStr}</td><td><button class="btn btn-sm btn-danger di-rm" data-id="${img.id||''}">✕</button></td></tr>`;
+      html+=`<div class="dk-card">
+        <div class="dk-card-head">
+          <div class="dk-name" title="${escapeHtml(full)}">${escapeHtml(repo)}</div>
+          <span class="app-cat">${escapeHtml(tag)}</span>
+        </div>
+        <div class="dk-meta">
+          <div class="dk-row"><span class="dk-k">ID</span><span class="dk-v mono">${escapeHtml(sid)}</span></div>
+          <div class="dk-row"><span class="dk-k">Size</span><span class="dk-v">${szStr}</span></div>
+        </div>
+        <div class="dk-actions">
+          <button class="btn btn-xs btn-danger di-rm" data-id="${escapeHtml(img.id||'')}" data-name="${escapeHtml(full)}" title="Remove">🗑 Remove</button>
+        </div>
+      </div>`;
     });
-    html+='</tbody></table></div></div>';
+    html+='</div>';
     dc.innerHTML=html;
     document.getElementById('di-pull').onclick=()=>renderDockerPull(dc);
-    dc.querySelectorAll('.di-rm').forEach(btn=>{btn.onclick=async function(){
-      const id=this.dataset.id;if(!confirm('Remove?'))return;
-      this.disabled=true;this.textContent='...';
-      try{const r=await api('/docker/images/'+encodeURIComponent(id)+'/remove',{method:'POST'});if(r.success){showToast('Removed','success');renderDockerImages(dc)}else showToast(r.message||'Failed','error')}catch(e){if(e.message!=='Unauthorized')showToast('Error: '+e.message,'error')}
+    dc.querySelectorAll('.di-rm').forEach(btn=>{btn.onclick=function(){
+      const id=this.dataset.id;const name=this.dataset.name||id;
+      confirmDialog({title:'Remove Image',messageHtml:'Remove image <strong>'+escapeHtml(name)+'</strong>?',okText:'Remove',danger:true,loadingText:'Removing...',onConfirm:async()=>{
+        const r=await api('/docker/images/'+encodeURIComponent(id)+'/remove',{method:'POST'});
+        if(!r.success)throw new Error(r.message||'Remove failed');
+        showToast('Removed','success');renderDockerImages(dc);
+      }});
     };});
   }catch(e){if(e.message!=='Unauthorized')dc.innerHTML='<div class="error-msg">Error: '+e.message+'</div>'}
 }
@@ -367,18 +387,39 @@ async function renderDockerNetworks(dc){
     const j=await api('/docker/networks');
     if(!j.success){dc.innerHTML='<div class="error-msg">Failed</div>';return}
     const list=j.data||[];if(!Array.isArray(list)){dc.innerHTML='<div class="error-msg">Invalid</div>';return}
-    let html='<div class="flex justify-between items-center mb-2"><span style="font-size:0.85rem;color:var(--text-dim)">'+list.length+' network(s)</span><button class="btn btn-sm btn-success" id="dn-add">+ Create</button></div>';
-    html+='<div class="card"><div class="table-wrap"><table><thead><tr><th>Name</th><th>Driver</th><th>Scope</th><th>Subnet</th><th>Gateway</th><th>Actions</th></tr></thead><tbody>';
+    let html='<div class="flex justify-between items-center mb-3"><span style="font-size:0.85rem;color:var(--text-dim)">'+list.length+' network(s)</span><button class="btn btn-sm btn-success" id="dn-add">+ Create</button></div>';
+    if(list.length===0){
+      html+='<div class="empty-state"><div class="icon">🔗</div><div>No networks</div></div>';
+      dc.innerHTML=html;document.getElementById('dn-add').onclick=()=>renderDockerNetworkCreate(dc);return;
+    }
+    html+='<div class="dk-grid">';
     list.forEach(n=>{
-      html+=`<tr><td><strong>${escapeHtml(n.name||'')}</strong></td><td style="color:var(--text-dim)">${escapeHtml(n.driver||'')}</td><td style="font-size:0.8rem;color:var(--text-muted)">${escapeHtml(n.scope||'')}</td><td style="font-size:0.8rem;font-family:monospace">${escapeHtml(n.subnet||'—')}</td><td style="font-size:0.8rem;font-family:monospace">${escapeHtml(n.gateway||'—')}</td><td><button class="btn btn-sm btn-danger dn-rm" data-id="${n.id||''}">✕</button></td></tr>`;
+      const isDefault=['bridge','host','none'].indexOf(n.name)>=0;
+      html+=`<div class="dk-card">
+        <div class="dk-card-head">
+          <div class="dk-name" title="${escapeHtml(n.name||'')}">${escapeHtml(n.name||'')}</div>
+          <span class="app-cat">${escapeHtml(n.driver||'')}</span>
+        </div>
+        <div class="dk-meta">
+          <div class="dk-row"><span class="dk-k">Scope</span><span class="dk-v">${escapeHtml(n.scope||'—')}</span></div>
+          <div class="dk-row"><span class="dk-k">Subnet</span><span class="dk-v mono">${escapeHtml(n.subnet||'—')}</span></div>
+          <div class="dk-row"><span class="dk-k">Gateway</span><span class="dk-v mono">${escapeHtml(n.gateway||'—')}</span></div>
+        </div>
+        <div class="dk-actions">
+          <button class="btn btn-xs btn-danger dn-rm" data-id="${escapeHtml(n.id||'')}" data-name="${escapeHtml(n.name||'')}" ${isDefault?'disabled title="Built-in network"':'title="Remove"'}>🗑 Remove</button>
+        </div>
+      </div>`;
     });
-    html+='</tbody></table></div></div>';
+    html+='</div>';
     dc.innerHTML=html;
     document.getElementById('dn-add').onclick=()=>renderDockerNetworkCreate(dc);
-    dc.querySelectorAll('.dn-rm').forEach(btn=>{btn.onclick=async function(){
-      const id=this.dataset.id;if(!confirm('Remove?'))return;
-      this.disabled=true;this.textContent='...';
-      try{const r=await api('/docker/networks/'+encodeURIComponent(id)+'/remove',{method:'POST'});if(r.success){showToast('Removed','success');renderDockerNetworks(dc)}else showToast(r.message||'Failed','error')}catch(e){if(e.message!=='Unauthorized')showToast('Error: '+e.message,'error')}
+    dc.querySelectorAll('.dn-rm').forEach(btn=>{btn.onclick=function(){
+      const id=this.dataset.id;const name=this.dataset.name||id;
+      confirmDialog({title:'Remove Network',messageHtml:'Remove network <strong>'+escapeHtml(name)+'</strong>?',okText:'Remove',danger:true,loadingText:'Removing...',onConfirm:async()=>{
+        const r=await api('/docker/networks/'+encodeURIComponent(id)+'/remove',{method:'POST'});
+        if(!r.success)throw new Error(r.message||'Remove failed');
+        showToast('Removed','success');renderDockerNetworks(dc);
+      }});
     };});
   }catch(e){if(e.message!=='Unauthorized')dc.innerHTML='<div class="error-msg">Error: '+e.message+'</div>'}
 }
@@ -422,20 +463,39 @@ async function renderDockerVolumes(dc){
     const j=await api('/docker/volumes');
     if(!j.success){dc.innerHTML='<div class="error-msg">Failed</div>';return}
     const list=j.data||[];if(!Array.isArray(list)){dc.innerHTML='<div class="error-msg">Invalid</div>';return}
-    let html='<div class="flex justify-between items-center mb-2"><span style="font-size:0.85rem;color:var(--text-dim)">'+list.length+' volume(s)</span><button class="btn btn-sm btn-success" id="dv-add">+ Create</button></div>';
-    html+='<div class="card"><div class="table-wrap"><table><thead><tr><th>Name</th><th>Driver</th><th>Mountpoint</th><th>Scope</th><th>Actions</th></tr></thead><tbody>';
+    let html='<div class="flex justify-between items-center mb-3"><span style="font-size:0.85rem;color:var(--text-dim)">'+list.length+' volume(s)</span><button class="btn btn-sm btn-success" id="dv-add">+ Create</button></div>';
+    if(list.length===0){
+      html+='<div class="empty-state"><div class="icon">💾</div><div>No volumes</div></div>';
+      dc.innerHTML=html;document.getElementById('dv-add').onclick=()=>renderDockerVolumeCreate(dc);return;
+    }
+    html+='<div class="dk-grid">';
     list.forEach(v=>{
       const nm=v.name||'';
       const mp=v.mountpoint||'';
-      html+=`<tr><td><strong>${escapeHtml(nm.length>35?nm.substring(0,35)+'…':nm)}</strong></td><td style="color:var(--text-dim)">${escapeHtml(v.driver||'')}</td><td style="font-size:0.8rem;font-family:monospace;color:var(--text-muted);max-width:200px;overflow:hidden;text-overflow:ellipsis">${escapeHtml(mp)}</td><td style="font-size:0.8rem">${escapeHtml(v.scope||'')}</td><td><button class="btn btn-sm btn-danger dv-rm" data-name="${escapeHtml(nm)}">✕</button></td></tr>`;
+      html+=`<div class="dk-card">
+        <div class="dk-card-head">
+          <div class="dk-name" title="${escapeHtml(nm)}">${escapeHtml(nm)}</div>
+          <span class="app-cat">${escapeHtml(v.driver||'local')}</span>
+        </div>
+        <div class="dk-meta">
+          <div class="dk-row"><span class="dk-k">Scope</span><span class="dk-v">${escapeHtml(v.scope||'—')}</span></div>
+          <div class="dk-row"><span class="dk-k">Mount</span><span class="dk-v mono" title="${escapeHtml(mp)}">${escapeHtml(mp||'—')}</span></div>
+        </div>
+        <div class="dk-actions">
+          <button class="btn btn-xs btn-danger dv-rm" data-name="${escapeHtml(nm)}" title="Remove">🗑 Remove</button>
+        </div>
+      </div>`;
     });
-    html+='</tbody></table></div></div>';
+    html+='</div>';
     dc.innerHTML=html;
     document.getElementById('dv-add').onclick=()=>renderDockerVolumeCreate(dc);
-    dc.querySelectorAll('.dv-rm').forEach(btn=>{btn.onclick=async function(){
-      const n=this.dataset.name;if(!confirm('Remove volume '+n+'?'))return;
-      this.disabled=true;this.textContent='...';
-      try{const r=await api('/docker/volumes/'+encodeURIComponent(n)+'/remove',{method:'POST'});if(r.success){showToast('Removed','success');renderDockerVolumes(dc)}else showToast(r.message||'Failed','error')}catch(e){if(e.message!=='Unauthorized')showToast('Error: '+e.message,'error')}
+    dc.querySelectorAll('.dv-rm').forEach(btn=>{btn.onclick=function(){
+      const n=this.dataset.name;
+      confirmDialog({title:'Remove Volume',messageHtml:'Remove volume <strong>'+escapeHtml(n)+'</strong>?',okText:'Remove',danger:true,loadingText:'Removing...',onConfirm:async()=>{
+        const r=await api('/docker/volumes/'+encodeURIComponent(n)+'/remove',{method:'POST'});
+        if(!r.success)throw new Error(r.message||'Remove failed');
+        showToast('Removed','success');renderDockerVolumes(dc);
+      }});
     };});
   }catch(e){if(e.message!=='Unauthorized')dc.innerHTML='<div class="error-msg">Error: '+e.message+'</div>'}
 }
