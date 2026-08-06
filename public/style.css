@@ -262,6 +262,19 @@ td.clickable:hover{text-decoration:underline;color:var(--secondary)}
 .app-actions{display:flex;gap:.5rem;margin-top:.1rem}
 .app-actions .btn{flex:1}
 
+/* ── Docker container cards (1Panel-style) ── */
+.dk-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:1rem}
+.dk-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:1rem 1.1rem;display:flex;flex-direction:column;gap:.7rem;box-shadow:var(--shadow-sm);transition:border-color var(--transition),box-shadow var(--transition)}
+.dk-card:hover{border-color:var(--border-accent);box-shadow:var(--shadow)}
+.dk-card-head{display:flex;align-items:center;justify-content:space-between;gap:.5rem}
+.dk-name{font-weight:700;font-size:.98rem;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.dk-meta{display:flex;flex-direction:column;gap:5px}
+.dk-row{display:flex;gap:.6rem;font-size:.8rem;align-items:baseline}
+.dk-k{color:var(--text-dim);width:52px;flex-shrink:0;text-transform:uppercase;font-size:.64rem;letter-spacing:.04em;font-weight:700;padding-top:1px}
+.dk-v{color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.dk-v.mono{font-family:var(--mono)}
+.dk-actions{display:flex;flex-wrap:wrap;gap:.35rem;border-top:1px solid var(--border);padding-top:.7rem}
+
 .live-chart{width:100%;height:120px}
 .live-chart svg{width:100%;height:100%;display:block;overflow:visible}
 .lc-grid{stroke:var(--border);stroke-width:1;opacity:.45}

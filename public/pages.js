@@ -104,8 +104,15 @@ async function renderDockerContainers(dc){
     if(!j.success){dc.innerHTML='<div class="error-msg">Failed</div>';return}
     const list=j.data||[];
     if(!Array.isArray(list)){dc.innerHTML='<div class="error-msg">Invalid data</div>';return}
-    let html='<div class="flex justify-between items-center mb-2"><span style="font-size:0.85rem;color:var(--text-dim)">'+list.length+' container(s)</span><div><button class="btn btn-sm btn-success" id="dc-create-btn">+ Create</button><button class="btn btn-sm" id="dc-refresh" style="margin-left:4px">⟳</button></div></div>';
-    html+='<div class="card"><div class="table-wrap"><table><thead><tr><th>ID</th><th>Name</th><th>Image</th><th>State</th><th>Ports</th><th>Actions</th></tr></thead><tbody>';
+    let html='<div class="flex justify-between items-center mb-3"><span style="font-size:0.85rem;color:var(--text-dim)">'+list.length+' container(s)</span><div><button class="btn btn-sm btn-success" id="dc-create-btn">+ Create</button><button class="btn btn-sm btn-ghost" id="dc-refresh" style="margin-left:4px">⟳ Refresh</button></div></div>';
+    if(list.length===0){
+      html+='<div class="empty-state"><div class="icon">🐳</div><div>No containers yet</div></div>';
+      dc.innerHTML=html;
+      document.getElementById('dc-refresh').onclick=()=>renderDockerContainers(dc);
+      document.getElementById('dc-create-btn').onclick=()=>renderDockerCreate(dc);
+      return;
+    }
+    html+='<div class="dk-grid">';
     list.forEach(ct=>{
       const shortId=(ct.id||'').substring(0,12);
       const st=ct.state||'';
@@ -113,24 +120,29 @@ async function renderDockerContainers(dc){
       const ports=Array.isArray(ct.ports)?ct.ports.join(', '):(ct.ports||'');
       const nm=(ct.name||'').replace(/^\//,'');
       const run=st==='running';const paused=st==='paused';
-      html+=`<tr>
-        <td style="font-family:monospace;font-size:0.8rem">${shortId}</td>
-        <td><strong>${escapeHtml(nm)}</strong><br><span style="font-size:0.75rem;color:var(--text-dim)">${escapeHtml(ct.status||'')}</span></td>
-        <td style="color:var(--text-muted);max-width:180px;overflow:hidden;text-overflow:ellipsis">${escapeHtml(ct.image||'')}</td>
-        <td><span class="status-badge ${sc}">${st}</span></td>
-        <td style="font-size:0.75rem;color:var(--text-dim);max-width:150px;overflow:hidden;text-overflow:ellipsis">${escapeHtml(ports)}</td>
-        <td style="white-space:nowrap">
-          <button class="btn btn-sm btn-success dc-act" data-id="${ct.id}" data-act="start" ${run?'disabled':''} title="Start">▶</button>
-          <button class="btn btn-sm btn-warning dc-act" data-id="${ct.id}" data-act="stop" ${!run||paused?'disabled':''} title="Stop">⏹</button>
-          <button class="btn btn-sm dc-act" data-id="${ct.id}" data-act="restart" title="Restart">↻</button>
-          <button class="btn btn-sm dc-act" data-id="${ct.id}" data-act="logs" title="Logs">📋</button>
-          <br><span style="font-size:0">
-          <button class="btn btn-sm dc-act" data-id="${ct.id}" data-act="stats" title="Stats">📊</button>
-          <button class="btn btn-sm dc-act" data-id="${ct.id}" data-act="inspect" title="Inspect">🔍</button>
-        </span></td>
-      </tr>`;
+      html+=`<div class="dk-card">
+        <div class="dk-card-head">
+          <div class="dk-name" title="${escapeHtml(nm)}">${escapeHtml(nm||shortId)}</div>
+          <span class="status-badge ${sc}">${escapeHtml(st)}</span>
+        </div>
+        <div class="dk-meta">
+          <div class="dk-row"><span class="dk-k">Image</span><span class="dk-v" title="${escapeHtml(ct.image||'')}">${escapeHtml(ct.image||'—')}</span></div>
+          <div class="dk-row"><span class="dk-k">ID</span><span class="dk-v mono">${escapeHtml(shortId)}</span></div>
+          <div class="dk-row"><span class="dk-k">Ports</span><span class="dk-v">${escapeHtml(ports||'—')}</span></div>
+          <div class="dk-row"><span class="dk-k">Status</span><span class="dk-v" title="${escapeHtml(ct.status||'')}">${escapeHtml(ct.status||'—')}</span></div>
+        </div>
+        <div class="dk-actions">
+          <button class="btn btn-xs btn-success dc-act" data-id="${ct.id}" data-act="start" ${run?'disabled':''} title="Start">▶</button>
+          <button class="btn btn-xs btn-warning dc-act" data-id="${ct.id}" data-act="stop" ${!run||paused?'disabled':''} title="Stop">⏹</button>
+          <button class="btn btn-xs btn-ghost dc-act" data-id="${ct.id}" data-act="restart" title="Restart">↻</button>
+          <button class="btn btn-xs btn-ghost dc-act" data-id="${ct.id}" data-act="logs" title="Logs">📋</button>
+          <button class="btn btn-xs btn-ghost dc-act" data-id="${ct.id}" data-act="stats" title="Stats">📊</button>
+          <button class="btn btn-xs btn-ghost dc-act" data-id="${ct.id}" data-act="inspect" title="Inspect">🔍</button>
+          <button class="btn btn-xs btn-danger dc-act" data-id="${ct.id}" data-act="remove" data-name="${escapeHtml(nm)}" title="Remove">🗑</button>
+        </div>
+      </div>`;
     });
-    html+='</tbody></table></div></div>';
+    html+='</div>';
     dc.innerHTML=html;
     document.getElementById('dc-refresh').onclick=()=>renderDockerContainers(dc);
     document.getElementById('dc-create-btn').onclick=()=>renderDockerCreate(dc);
@@ -141,7 +153,16 @@ async function renderDockerContainers(dc){
         if(act==='logs'){renderDockerLogs(dc,id);return}
         if(act==='stats'){renderDockerStats(dc,id);return}
         if(act==='inspect'){renderDockerInspect(dc,id);return}
-        this.disabled=true;const orig=this.textContent;this.textContent='...';
+        if(act==='remove'){
+          const nm=this.dataset.name||id.substring(0,12);
+          confirmDialog({title:'Remove Container',messageHtml:'Remove container <strong>'+escapeHtml(nm)+'</strong>? This cannot be undone.',okText:'Remove',danger:true,loadingText:'Removing...',onConfirm:async()=>{
+            const r=await api('/docker/containers/'+encodeURIComponent(id)+'/remove',{method:'POST'});
+            if(!r.success)throw new Error(r.message||'Remove failed');
+            showToast('Container removed','success');renderDockerContainers(dc);
+          }});
+          return;
+        }
+        this.disabled=true;const orig=this.textContent;this.textContent='…';
         try{
           const r=await api('/docker/containers/'+encodeURIComponent(id)+'/'+act,{method:'POST'});
           if(!r.success)showToast((r.message||'Failed'),'error');
