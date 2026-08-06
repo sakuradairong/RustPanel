@@ -141,6 +141,8 @@ th{color:var(--text-dim);font-weight:700;font-size:.72rem;text-transform:upperca
 tr:last-child td{border-bottom:none}
 tr:hover td{background:rgba(56,189,248,.03)}
 tr:nth-child(even) td{background:rgba(255,255,255,.005)}
+th.sortable{cursor:pointer;user-select:none}
+th.sortable:hover{color:var(--text)}
 td.clickable{cursor:pointer;color:var(--primary);font-weight:500}
 td.clickable:hover{text-decoration:underline;color:var(--secondary)}
 

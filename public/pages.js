@@ -790,6 +790,11 @@ async function renderProcessManagement(){
   processInterval=setInterval(loadProcessList,5000);
 }
 
+let processSort={key:'cpu',dir:'desc'};
+function procSortIndicator(key){
+  if(processSort.key!==key)return '';
+  return processSort.dir==='asc'?' ▲':' ▼';
+}
 async function loadProcessList(){
   const container=document.getElementById('process-list-container');
   if(!container)return;
@@ -800,7 +805,19 @@ async function loadProcessList(){
     if(!j.success){container.innerHTML='<div class="error-msg">Failed to load processes</div>';return}
     const processes=j.data||[];
     if(!Array.isArray(processes)){container.innerHTML='<div class="error-msg">Invalid process data</div>';return}
-    let html='<div class="table-wrap"><table><thead><tr><th>PID</th><th>Name</th><th>CPU%</th><th>Memory</th><th>Status</th><th>Run Time</th><th>Actions</th></tr></thead><tbody>';
+    // Client-side sort (default: CPU desc)
+    const sd=processSort.dir==='asc'?1:-1,sk=processSort.key;
+    processes.sort((a,b)=>{
+      if(sk==='name'||sk==='status'){
+        const av=(a[sk]||'').toLowerCase(),bv=(b[sk]||'').toLowerCase();
+        return av<bv?-sd:av>bv?sd:0;
+      }
+      return ((+a[sk]||0)-(+b[sk]||0))*sd;
+    });
+    const cols=[['pid','PID'],['name','Name'],['cpu','CPU%'],['memory','Memory'],['status','Status']];
+    let html='<div class="table-wrap"><table><thead><tr>'+
+      cols.map(c=>`<th class="sortable" data-sort="${c[0]}">${c[1]}${procSortIndicator(c[0])}</th>`).join('')+
+      '<th>Run Time</th><th>Actions</th></tr></thead><tbody>';
     processes.forEach(p=>{
       const memStr=p.memory!=null?p.memory+' MB':'N/A';
       const cpuStr=p.cpu!=null?p.cpu+'%':'N/A';
@@ -816,6 +833,14 @@ async function loadProcessList(){
     });
     html+='</tbody></table></div>';
     container.innerHTML=html;
+    container.querySelectorAll('th.sortable[data-sort]').forEach(th=>{
+      th.addEventListener('click',()=>{
+        const k=th.dataset.sort;
+        if(processSort.key===k)processSort.dir=processSort.dir==='asc'?'desc':'asc';
+        else{processSort.key=k;processSort.dir=(k==='name'||k==='status')?'asc':'desc'}
+        loadProcessList();
+      });
+    });
     container.querySelectorAll('.kill-process-btn').forEach(btn=>{
       btn.addEventListener('click',function(){
         const pid=this.dataset.pid;
