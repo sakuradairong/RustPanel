@@ -526,6 +526,9 @@ async function renderDockerVolumeCreate(dc){
   };
 }
 // ── System Info ──
+function infoCard(k,v){
+  return `<div class="card info-item"><div class="info-k">${escapeHtml(k)}</div><div class="info-v">${escapeHtml(String(v))}</div></div>`;
+}
 async function renderSystemInfo(){
   const c=document.getElementById('content');
   if(!c)return;
@@ -535,19 +538,42 @@ async function renderSystemInfo(){
     if(!j.success||!j.data){c.innerHTML='<div class="error-msg">Failed to load system info</div>';return}
     const d=j.data;
     const os=d.os||{};
-    const rows=[
-      ['OS Name',os.name||'N/A'],
-      ['Kernel Version',os.kernel_version||'N/A'],
-      ['OS Version',os.os_version||'N/A'],
-      ['Platform',os.long_os_version||os.os_type||'N/A'],
-      ['Hostname',os.host_name||os.hostname||'N/A'],
-      ['Architecture',os.architecture||'N/A'],
-      ['Boot Time',os.boot_time?new Date((os.boot_time)*1000).toLocaleString():'N/A'],
-      ['Updated At',d.updated_at?new Date(d.updated_at*1000).toLocaleString():'N/A']
-    ];
-    c.innerHTML=`<div class="card"><div class="table-wrap"><table class="sys-table"><tbody>
-      ${rows.map(r=>`<tr><td>${r[0]}</td><td>${escapeHtml(r[1])}</td></tr>`).join('')}
-    </tbody></table></div></div>`;
+    const mem=d.memory||{};
+    const load=d.load||{};
+    const coreCount=Array.isArray(d.cpu)?d.cpu.length:0;
+    const host=os.host_name||os.hostname||'N/A';
+    const kernel=os.kernel_version||'N/A';
+    const arch=os.architecture||'N/A';
+    const osName=(os.name||os.os_type||'Linux')+(os.os_version?(' '+os.os_version):'');
+    const bootSec=Number(os.boot_time)||0;
+    const nowSec=Number(d.updated_at)||Math.floor(Date.now()/1000);
+    const uptime=bootSec>0?formatUptime(nowSec-bootSec):'N/A';
+    const totalMem=mem.total?formatSize(mem.total*1048576):'N/A';
+    const loadStr=(load.one!=null)?(load.one.toFixed(2)+' / '+(load.five||0).toFixed(2)+' / '+(load.fifteen||0).toFixed(2)):'N/A';
+    const bootStr=bootSec>0?new Date(bootSec*1000).toLocaleString():'N/A';
+    const updStr=d.updated_at?new Date(d.updated_at*1000).toLocaleString():'N/A';
+    c.innerHTML=`
+    <div class="card ds-overview mb-4">
+      <div class="ov-item"><span class="ov-k">Host</span><span class="ov-v">${escapeHtml(host)}</span></div>
+      <div class="ov-item"><span class="ov-k">OS</span><span class="ov-v">${escapeHtml(osName)}</span></div>
+      <div class="ov-item"><span class="ov-k">Kernel</span><span class="ov-v">${escapeHtml(kernel)}</span></div>
+      <div class="ov-item"><span class="ov-k">Arch</span><span class="ov-v">${escapeHtml(arch)}</span></div>
+      <div class="ov-item"><span class="ov-k">Uptime</span><span class="ov-v">${escapeHtml(uptime)}</span></div>
+    </div>
+    <div class="info-grid">
+      ${infoCard('OS Name',os.name||'N/A')}
+      ${infoCard('OS Version',os.os_version||'N/A')}
+      ${infoCard('Platform',os.long_os_version||os.os_type||'N/A')}
+      ${infoCard('Kernel',kernel)}
+      ${infoCard('Architecture',arch)}
+      ${infoCard('Hostname',host)}
+      ${infoCard('CPU Cores',coreCount||'N/A')}
+      ${infoCard('Total Memory',totalMem)}
+      ${infoCard('Load 1m / 5m / 15m',loadStr)}
+      ${infoCard('Boot Time',bootStr)}
+      ${infoCard('Uptime',uptime)}
+      ${infoCard('Updated At',updStr)}
+    </div>`;
   }catch(e){
     if(e.message!=='Unauthorized')c.innerHTML=`<div class="error-msg">Error: ${e.message}</div>`;
   }

@@ -262,6 +262,12 @@ td.clickable:hover{text-decoration:underline;color:var(--secondary)}
 .app-actions{display:flex;gap:.5rem;margin-top:.1rem}
 .app-actions .btn{flex:1}
 
+/* ── System Info cards (1Panel-style) ── */
+.info-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:.85rem}
+.info-item{padding:.9rem 1.1rem}
+.info-item .info-k{font-size:.66rem;text-transform:uppercase;letter-spacing:.06em;color:var(--text-dim);font-weight:700;margin-bottom:5px}
+.info-item .info-v{font-size:.95rem;color:var(--text);font-weight:600;font-variant-numeric:tabular-nums;word-break:break-word}
+
 /* ── Docker container cards (1Panel-style) ── */
 .dk-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:1rem}
 .dk-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:1rem 1.1rem;display:flex;flex-direction:column;gap:.7rem;box-shadow:var(--shadow-sm);transition:border-color var(--transition),box-shadow var(--transition)}
