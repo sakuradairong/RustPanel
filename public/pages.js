@@ -101,6 +101,7 @@ async function renderDockerTab(){
 // ── Containers ──
 let dcFilterQ='';
 let dcFilterState='all'; // all | running | exited | other
+let dcSelected=new Set();
 
 async function renderDockerContainers(dc){
   dc.innerHTML='<div style="text-align:center;padding:2rem;color:var(--text-dim)">Loading...</div>';
@@ -109,6 +110,9 @@ async function renderDockerContainers(dc){
     if(!j.success){dc.innerHTML='<div class="error-msg">Failed</div>';return}
     const list=j.data||[];
     if(!Array.isArray(list)){dc.innerHTML='<div class="error-msg">Invalid data</div>';return}
+    // Drop selections that no longer exist
+    const ids=new Set(list.map(c=>c.id));
+    dcSelected.forEach(id=>{if(!ids.has(id))dcSelected.delete(id)});
 
     const runningN=list.filter(c=>(c.state||'').toLowerCase()==='running').length;
     dc.innerHTML=`<div class="dk-toolbar">
@@ -127,21 +131,75 @@ async function renderDockerContainers(dc){
         <button class="btn btn-sm btn-ghost" id="dc-refresh">⟳ Refresh</button>
       </div>
     </div>
+    <div class="dk-batch" id="dc-batch">
+      <span class="dk-batch-label" id="dc-batch-label">0 selected</span>
+      <button class="btn btn-xs btn-success" id="dc-batch-start">Start</button>
+      <button class="btn btn-xs btn-warning" id="dc-batch-stop">Stop</button>
+      <button class="btn btn-xs btn-ghost" id="dc-batch-restart">Restart</button>
+      <button class="btn btn-xs btn-danger" id="dc-batch-remove">Remove</button>
+      <button class="btn btn-xs btn-ghost" id="dc-batch-clear">Clear</button>
+    </div>
     <div id="dc-body"></div>`;
 
+    const syncBatchBar=()=>{
+      const bar=document.getElementById('dc-batch');
+      const label=document.getElementById('dc-batch-label');
+      if(!bar||!label)return;
+      const n=dcSelected.size;
+      label.textContent=n+' selected';
+      bar.classList.toggle('show',n>0);
+    };
+
+    const runBatch=async(act)=>{
+      const selected=[...dcSelected];
+      if(!selected.length)return;
+      if(act==='remove'){
+        confirmDialog({title:'Remove Containers',messageHtml:'Remove <strong>'+selected.length+'</strong> container(s)? This cannot be undone.',okText:'Remove',danger:true,loadingText:'Removing...',onConfirm:async()=>{
+          let ok=0,fail=0;
+          for(const id of selected){
+            const r=await api('/docker/containers/'+encodeURIComponent(id)+'/remove',{method:'POST'});
+            if(r.success)ok++; else fail++;
+          }
+          dcSelected.clear();
+          showToast(fail?('Removed '+ok+', failed '+fail):('Removed '+ok),'success');
+          renderDockerContainers(dc);
+        }});
+        return;
+      }
+      let ok=0,fail=0;
+      for(const id of selected){
+        const r=await api('/docker/containers/'+encodeURIComponent(id)+'/'+act,{method:'POST'});
+        if(r.success)ok++; else fail++;
+      }
+      showToast((act+' · ok '+ok+(fail?', fail '+fail:'')),fail?'error':'success');
+      renderDockerContainers(dc);
+    };
+
     const bindActs=()=>{
+      dc.querySelectorAll('.dc-check').forEach(cb=>{
+        cb.onchange=function(){
+          const id=this.dataset.id;
+          if(this.checked)dcSelected.add(id); else dcSelected.delete(id);
+          this.closest('.dk-card')?.classList.toggle('selected',this.checked);
+          syncBatchBar();
+        };
+      });
+      dc.querySelectorAll('.dk-name[data-detail]').forEach(el=>{
+        el.onclick=()=>openDockerDetailDrawer(dc,el.dataset.detail,el.dataset.name||'');
+      });
       dc.querySelectorAll('.dc-act').forEach(btn=>{
         btn.onclick=async function(){
           const id=this.dataset.id;const act=this.dataset.act;
           if(!id)return;
           if(act==='logs'){renderDockerLogs(dc,id);return}
           if(act==='stats'){renderDockerStats(dc,id);return}
-          if(act==='inspect'){renderDockerInspect(dc,id);return}
+          if(act==='inspect'){openDockerDetailDrawer(dc,id,this.dataset.name||'');return}
           if(act==='remove'){
             const nm=this.dataset.name||id.substring(0,12);
             confirmDialog({title:'Remove Container',messageHtml:'Remove container <strong>'+escapeHtml(nm)+'</strong>? This cannot be undone.',okText:'Remove',danger:true,loadingText:'Removing...',onConfirm:async()=>{
               const r=await api('/docker/containers/'+encodeURIComponent(id)+'/remove',{method:'POST'});
               if(!r.success)throw new Error(r.message||'Remove failed');
+              dcSelected.delete(id);
               showToast('Container removed','success');renderDockerContainers(dc);
             }});
             return;
@@ -177,10 +235,12 @@ async function renderDockerContainers(dc){
       if(!body)return;
       if(list.length===0){
         body.innerHTML='<div class="empty-state"><div class="icon">🐳</div><div>No containers yet</div></div>';
+        syncBatchBar();
         return;
       }
       if(filtered.length===0){
         body.innerHTML='<div class="empty-state"><div class="icon">🔎</div><div>No containers match this filter</div></div>';
+        syncBatchBar();
         return;
       }
       let html='<div class="dk-grid">';
@@ -191,9 +251,11 @@ async function renderDockerContainers(dc){
         const ports=Array.isArray(ct.ports)?ct.ports.join(', '):(ct.ports||'');
         const nm=(ct.name||'').replace(/^\//,'');
         const run=st==='running';const paused=st==='paused';
-        html+=`<div class="dk-card">
+        const sel=dcSelected.has(ct.id);
+        html+=`<div class="dk-card${sel?' selected':''}">
           <div class="dk-card-head">
-            <div class="dk-name" title="${escapeHtml(nm)}">${escapeHtml(nm||shortId)}</div>
+            <input type="checkbox" class="dk-check dc-check" data-id="${ct.id}" ${sel?'checked':''} title="Select">
+            <div class="dk-name" data-detail="${ct.id}" data-name="${escapeHtml(nm)}" title="Open details">${escapeHtml(nm||shortId)}</div>
             <span class="status-badge ${sc}">${escapeHtml(st)}</span>
           </div>
           <div class="dk-meta">
@@ -208,7 +270,7 @@ async function renderDockerContainers(dc){
             <button class="btn btn-xs btn-ghost dc-act" data-id="${ct.id}" data-act="restart" title="Restart">↻</button>
             <button class="btn btn-xs btn-ghost dc-act" data-id="${ct.id}" data-act="logs" title="Logs">📋</button>
             <button class="btn btn-xs btn-ghost dc-act" data-id="${ct.id}" data-act="stats" title="Stats">📊</button>
-            <button class="btn btn-xs btn-ghost dc-act" data-id="${ct.id}" data-act="inspect" title="Inspect">🔍</button>
+            <button class="btn btn-xs btn-ghost dc-act" data-id="${ct.id}" data-act="inspect" data-name="${escapeHtml(nm)}" title="Details">🔍</button>
             <button class="btn btn-xs btn-danger dc-act" data-id="${ct.id}" data-act="remove" data-name="${escapeHtml(nm)}" title="Remove">🗑</button>
           </div>
         </div>`;
@@ -216,6 +278,7 @@ async function renderDockerContainers(dc){
       html+='</div>';
       body.innerHTML=html;
       bindActs();
+      syncBatchBar();
     };
 
     document.getElementById('dc-search').oninput=function(){dcFilterQ=this.value;paintBody()};
@@ -225,8 +288,111 @@ async function renderDockerContainers(dc){
     };
     document.getElementById('dc-refresh').onclick=()=>renderDockerContainers(dc);
     document.getElementById('dc-create-btn').onclick=()=>renderDockerCreate(dc);
+    document.getElementById('dc-batch-start').onclick=()=>runBatch('start');
+    document.getElementById('dc-batch-stop').onclick=()=>runBatch('stop');
+    document.getElementById('dc-batch-restart').onclick=()=>runBatch('restart');
+    document.getElementById('dc-batch-remove').onclick=()=>runBatch('remove');
+    document.getElementById('dc-batch-clear').onclick=()=>{dcSelected.clear();paintBody()};
     paintBody();
   }catch(e){if(e.message!=='Unauthorized')dc.innerHTML='<div class="error-msg">Error: '+e.message+'</div>'}
+}
+
+function formatUptimeSecs(sec){
+  sec=Number(sec)||0;
+  if(sec<60)return sec+'s';
+  if(sec<3600)return Math.floor(sec/60)+'m '+ (sec%60)+'s';
+  if(sec<86400)return Math.floor(sec/3600)+'h '+Math.floor((sec%3600)/60)+'m';
+  return Math.floor(sec/86400)+'d '+Math.floor((sec%86400)/3600)+'h';
+}
+
+async function openDockerDetailDrawer(dc,id,nameHint){
+  const d=openDrawer('<div style="color:var(--text-dim);padding:1rem 0">Loading details…</div>',{title:nameHint||'Container',width:'480px'});
+  try{
+    const j=await api('/docker/containers/'+encodeURIComponent(id)+'/inspect');
+    if(!j.success||!j.data){d.body.innerHTML='<div class="error-msg">Inspect unavailable</div>';return}
+    const info=j.data;
+    const cfg=info.Config||{};
+    const st=info.State||{};
+    const hc=info.HostConfig||{};
+    const ns=info.NetworkSettings||{};
+    const nm=(info.Name||nameHint||'').replace(/^\//,'');
+    d.root.querySelector('.drawer-title').textContent=nm||id.substring(0,12);
+    const env=(cfg.Env||[]).slice(0,20);
+    const ports=ns.Ports||{};
+    const portLines=Object.keys(ports).map(k=>{
+      const binds=ports[k];
+      if(!binds||!binds.length)return k;
+      return binds.map(b=>(b.HostIp||'0.0.0.0')+':'+b.HostPort+'→'+k).join(', ');
+    });
+    const nets=ns.Networks||{};
+    const netNames=Object.keys(nets);
+    const restart=(hc.RestartPolicy&&hc.RestartPolicy.Name)||'—';
+    const state=(st.Status||'').toLowerCase();
+    const run=state==='running';
+    d.body.innerHTML=`
+      <div class="drawer-section">
+        <div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.7rem">
+          <span class="status-badge ${escapeHtml(state)}">${escapeHtml(st.Status||'—')}</span>
+          <span class="text-sm text-muted">${escapeHtml(st.Error||'')}</span>
+        </div>
+        <div class="drawer-kv">
+          <div class="k">ID</div><div class="v">${escapeHtml((info.Id||id).substring(0,12))}</div>
+          <div class="k">Image</div><div class="v">${escapeHtml(cfg.Image||'—')}</div>
+          <div class="k">Created</div><div class="v">${escapeHtml(info.Created||'—')}</div>
+          <div class="k">Restart</div><div class="v">${escapeHtml(restart)}</div>
+          <div class="k">Network</div><div class="v">${escapeHtml(netNames.join(', ')||hc.NetworkMode||'—')}</div>
+          <div class="k">IP</div><div class="v">${escapeHtml(ns.IPAddress||(nets[netNames[0]]&&nets[netNames[0]].IPAddress)||'—')}</div>
+          <div class="k">Cmd</div><div class="v">${escapeHtml((cfg.Cmd||[]).join(' ')||'—')}</div>
+        </div>
+      </div>
+      <div class="drawer-section">
+        <h4>Ports</h4>
+        <div class="drawer-pre">${escapeHtml(portLines.join('\n')||'—')}</div>
+      </div>
+      <div class="drawer-section">
+        <h4>Environment</h4>
+        <div class="drawer-pre">${escapeHtml(env.join('\n')||'—')}${(cfg.Env||[]).length>20?'\n…':''}</div>
+      </div>
+      <div class="drawer-section">
+        <h4>Actions</h4>
+        <div class="drawer-actions">
+          <button class="btn btn-sm btn-success" id="dr-start" ${run?'disabled':''}>Start</button>
+          <button class="btn btn-sm btn-warning" id="dr-stop" ${!run?'disabled':''}>Stop</button>
+          <button class="btn btn-sm btn-ghost" id="dr-restart">Restart</button>
+          <button class="btn btn-sm btn-ghost" id="dr-logs">Logs</button>
+          <button class="btn btn-sm btn-ghost" id="dr-stats">Stats</button>
+          <button class="btn btn-sm btn-ghost" id="dr-raw">Raw JSON</button>
+          <button class="btn btn-sm btn-danger" id="dr-remove">Remove</button>
+        </div>
+      </div>
+      <div class="drawer-section" id="dr-raw-box" style="display:none">
+        <h4>Raw Inspect</h4>
+        <pre class="drawer-pre" style="max-height:360px">${escapeHtml(JSON.stringify(info,null,2))}</pre>
+      </div>`;
+    const act=async(a)=>{
+      const r=await api('/docker/containers/'+encodeURIComponent(id)+'/'+a,{method:'POST'});
+      if(!r.success){showToast(r.message||'Failed','error');return}
+      showToast(a+' ok','success');d.close();renderDockerContainers(dc);
+    };
+    d.body.querySelector('#dr-start').onclick=()=>act('start');
+    d.body.querySelector('#dr-stop').onclick=()=>act('stop');
+    d.body.querySelector('#dr-restart').onclick=()=>act('restart');
+    d.body.querySelector('#dr-logs').onclick=()=>{d.close();renderDockerLogs(dc,id)};
+    d.body.querySelector('#dr-stats').onclick=()=>{d.close();renderDockerStats(dc,id)};
+    d.body.querySelector('#dr-raw').onclick=()=>{
+      const box=d.body.querySelector('#dr-raw-box');
+      box.style.display=box.style.display==='none'?'block':'none';
+    };
+    d.body.querySelector('#dr-remove').onclick=()=>{
+      confirmDialog({title:'Remove Container',messageHtml:'Remove <strong>'+escapeHtml(nm)+'</strong>?',okText:'Remove',danger:true,loadingText:'Removing...',onConfirm:async()=>{
+        const r=await api('/docker/containers/'+encodeURIComponent(id)+'/remove',{method:'POST'});
+        if(!r.success)throw new Error(r.message||'Remove failed');
+        showToast('Removed','success');d.close();renderDockerContainers(dc);
+      }});
+    };
+  }catch(e){
+    if(e.message!=='Unauthorized')d.body.innerHTML='<div class="error-msg">Error: '+escapeHtml(e.message)+'</div>';
+  }
 }
 
 async function renderDockerLogs(dc,id){
@@ -329,20 +495,9 @@ async function renderDockerStats(dc,id){
   }catch(e){if(e.message!=='Unauthorized')dc.innerHTML='<div class="error-msg">Error: '+e.message+'</div>'}
 }
 
-// ── Container Inspect ──
+// ── Container Inspect (legacy full-page; prefer drawer) ──
 async function renderDockerInspect(dc,id){
-  dc.innerHTML='<div style="text-align:center;padding:2rem;color:var(--text-dim)">Loading inspect...</div>';
-  try{
-    const j=await api('/docker/containers/'+encodeURIComponent(id)+'/inspect');
-    if(!j.success||!j.data){dc.innerHTML='<div class="error-msg">Inspect data unavailable</div>';return}
-    dc.innerHTML=`
-    <div class="flex justify-between items-center mb-3">
-      <span style="font-size:0.85rem;font-weight:600">Container Inspect</span>
-      <button class="btn btn-sm" id="dc-ins-back">Back</button>
-    </div>
-    <pre style="background:#1a1a2e;color:#e0e0e0;padding:12px;border-radius:6px;font-size:0.8rem;max-height:600px;overflow-y:auto;font-family:monospace;white-space:pre-wrap">${escapeHtml(JSON.stringify(j.data,null,2))}</pre>`;
-    document.getElementById('dc-ins-back').onclick=()=>renderDockerContainers(dc);
-  }catch(e){if(e.message!=='Unauthorized')dc.innerHTML='<div class="error-msg">Error: '+e.message+'</div>'}
+  openDockerDetailDrawer(dc,id,'');
 }
 
 function renderDockerCreate(dc){
@@ -876,21 +1031,30 @@ async function renderProcessManagement(){
   c.innerHTML=`
   <div class="flex justify-between items-center mb-4">
     <h2 style="font-size:1.1rem;font-weight:600">Process Management</h2>
+    <span class="text-sm text-muted" id="process-count"></span>
   </div>
-  <div class="search-bar">
-    <input type="text" id="process-search-input" placeholder="Search by name..." value="${processSearchKeyword||''}">
-    <button class="btn btn-sm" id="process-search-btn">Search</button>
+  <div class="dk-toolbar" style="margin-bottom:.85rem">
+    <div class="dk-toolbar-left">
+      <input type="search" class="dk-search" id="process-search-input" placeholder="Search name or PID…" value="${escapeHtml(processSearchKeyword||'')}" autocomplete="off">
+      <button class="btn btn-sm btn-ghost" id="process-search-btn">Search</button>
+    </div>
   </div>
   <div class="card" id="process-list-container">
     <div style="text-align:center;padding:2rem;color:var(--text-dim)">Loading processes...</div>
   </div>`;
 
-  document.getElementById('process-search-btn').addEventListener('click',()=>{
+  let debounce=null;
+  const applySearch=()=>{
     processSearchKeyword=document.getElementById('process-search-input').value.trim();
     loadProcessList();
-  });
+  };
+  document.getElementById('process-search-btn').addEventListener('click',applySearch);
   document.getElementById('process-search-input').addEventListener('keydown',e=>{
-    if(e.key==='Enter')document.getElementById('process-search-btn').click();
+    if(e.key==='Enter')applySearch();
+  });
+  document.getElementById('process-search-input').addEventListener('input',()=>{
+    clearTimeout(debounce);
+    debounce=setTimeout(applySearch,350);
   });
 
   await loadProcessList();
@@ -925,16 +1089,19 @@ async function loadProcessList(){
     let html='<div class="table-wrap"><table><thead><tr>'+
       cols.map(c=>`<th class="sortable" data-sort="${c[0]}">${c[1]}${procSortIndicator(c[0])}</th>`).join('')+
       '<th>Run Time</th><th>Actions</th></tr></thead><tbody>';
+    const countEl=document.getElementById('process-count');
+    if(countEl)countEl.textContent=processes.length+' process(es)';
     processes.forEach(p=>{
-      const memStr=p.memory!=null?p.memory+' MB':'N/A';
-      const cpuStr=p.cpu!=null?p.cpu+'%':'N/A';
+      const memStr=p.memory!=null?formatSize(p.memory):'N/A';
+      const cpuStr=p.cpu!=null?(Number(p.cpu).toFixed(1)+'%'):'N/A';
+      const rt=formatUptimeSecs(p.run_time!=null?p.run_time:p.runtime);
       html+=`<tr>
         <td style="font-family:monospace">${p.pid||''}</td>
         <td>${escapeHtml(p.name||'')}</td>
         <td>${cpuStr}</td>
         <td>${memStr}</td>
         <td>${escapeHtml(p.status||'')}</td>
-        <td style="color:var(--text-dim);font-size:0.8rem">${escapeHtml(p.run_time||p.runtime||'')}</td>
+        <td style="color:var(--text-dim);font-size:0.8rem">${escapeHtml(rt)}</td>
         <td><button class="btn btn-sm btn-danger kill-process-btn" data-pid="${p.pid}" data-name="${escapeHtml(p.name||'')}">Kill</button></td>
       </tr>`;
     });

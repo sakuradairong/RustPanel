@@ -109,6 +109,44 @@ function createLiveChart(svg,opts){
   };
 }
 
+// Open a right-side drawer panel. Same ESC / overlay-close / focus restore as openModal.
+// opts: { width, title, closeOnOverlay=true, onClose }
+function openDrawer(innerHTML,opts){
+  opts=opts||{};
+  const prevFocus=document.activeElement;
+  const overlay=document.createElement('div');
+  overlay.className='drawer-overlay';
+  const width=opts.width||'420px';
+  overlay.innerHTML=`<aside class="drawer" role="dialog" aria-modal="true" style="width:min(100%,${width})">
+    <div class="drawer-head">
+      <div class="drawer-title">${escapeHtml(opts.title||'')}</div>
+      <button type="button" class="drawer-close" data-role="close" aria-label="Close">×</button>
+    </div>
+    <div class="drawer-body">${innerHTML}</div>
+  </aside>`;
+  const root=overlay.querySelector('.drawer');
+  const body=overlay.querySelector('.drawer-body');
+  let closed=false;
+  function close(){
+    if(closed)return;
+    closed=true;
+    overlay.classList.add('closing');
+    document.removeEventListener('keydown',onKey);
+    setTimeout(()=>{
+      overlay.remove();
+      if(opts.onClose){try{opts.onClose()}catch(e){}}
+      if(prevFocus&&prevFocus.focus){try{prevFocus.focus()}catch(e){}}
+    },180);
+  }
+  function onKey(e){if(e.key==='Escape')close()}
+  if(opts.closeOnOverlay!==false)overlay.addEventListener('click',e=>{if(e.target===overlay)close()});
+  overlay.querySelector('[data-role=close]').addEventListener('click',close);
+  document.addEventListener('keydown',onKey);
+  document.body.appendChild(overlay);
+  requestAnimationFrame(()=>overlay.classList.add('open'));
+  return {overlay,root,body,close};
+}
+
 function confirmDialog(opts){
   opts=opts||{};
   const okText=opts.okText||'Confirm';

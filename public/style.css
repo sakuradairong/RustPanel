@@ -165,6 +165,35 @@ td.clickable:hover{text-decoration:underline;color:var(--secondary)}
 .modal .field{margin-bottom:.85rem}.modal .field label{display:block;font-size:.82rem;color:var(--text-muted);margin-bottom:4px;font-weight:600}
 .modal .btn-row{display:flex;gap:.6rem;justify-content:flex-end;margin-top:1.2rem}.modal .btn-row button{min-width:90px}
 
+/* ── Drawer (1Panel-style detail panel) ── */
+.drawer-overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:210;display:flex;justify-content:flex-end;backdrop-filter:blur(3px);opacity:0;transition:opacity .18s ease}
+.drawer-overlay.open{opacity:1}
+.drawer-overlay.closing{opacity:0}
+.drawer{height:100%;background:var(--card);border-left:1px solid var(--border);box-shadow:var(--shadow-lg);display:flex;flex-direction:column;transform:translateX(100%);transition:transform .2s ease;max-width:100%}
+.drawer-overlay.open .drawer{transform:translateX(0)}
+.drawer-overlay.closing .drawer{transform:translateX(100%)}
+.drawer-head{display:flex;align-items:center;justify-content:space-between;gap:.75rem;padding:1rem 1.15rem;border-bottom:1px solid var(--border);flex-shrink:0}
+.drawer-title{font-weight:700;font-size:1rem;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.drawer-close{background:transparent;border:1px solid var(--border);color:var(--text-muted);width:32px;height:32px;border-radius:8px;font-size:1.2rem;line-height:1;cursor:pointer}
+.drawer-close:hover{background:var(--bg-elevated);color:var(--text)}
+.drawer-body{padding:1.1rem 1.15rem;overflow-y:auto;flex:1;min-height:0}
+.drawer-section{margin-bottom:1.1rem}
+.drawer-section h4{font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--text-dim);margin-bottom:.45rem;font-weight:700}
+.drawer-kv{display:grid;grid-template-columns:90px 1fr;gap:6px 10px;font-size:.84rem}
+.drawer-kv .k{color:var(--text-dim)}
+.drawer-kv .v{color:var(--text);word-break:break-word;font-family:var(--mono);font-size:.8rem}
+.drawer-actions{display:flex;flex-wrap:wrap;gap:.4rem;margin-top:.3rem}
+.drawer-pre{background:var(--bg-elevated);border:1px solid var(--border);border-radius:8px;padding:.7rem .8rem;font-family:var(--mono);font-size:.75rem;max-height:220px;overflow:auto;white-space:pre-wrap;color:var(--text-muted)}
+
+/* ── Batch action bar ── */
+.dk-batch{display:none;align-items:center;gap:.5rem;flex-wrap:wrap;margin:0 0 .85rem;padding:.55rem .75rem;background:var(--primary-glow);border:1px solid rgba(56,189,248,.35);border-radius:10px}
+.dk-batch.show{display:flex}
+.dk-batch .dk-batch-label{font-size:.82rem;font-weight:600;color:var(--primary);margin-right:.25rem}
+.dk-card.selected{border-color:rgba(56,189,248,.55);box-shadow:0 0 0 1px rgba(56,189,248,.25)}
+.dk-check{appearance:auto;width:16px;height:16px;margin:0;cursor:pointer;accent-color:var(--primary);flex-shrink:0}
+.dk-card-head .dk-name{cursor:pointer}
+.dk-card-head .dk-name:hover{color:var(--primary)}
+
 /* ── Log Viewer ── */
 .log-layout{display:flex;gap:1rem;min-height:500px}
 .log-sidebar{width:230px;flex-shrink:0;background:var(--card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:.5rem}
@@ -294,8 +323,9 @@ td.clickable:hover{text-decoration:underline;color:var(--secondary)}
 .dk-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:1rem}
 .dk-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:1rem 1.1rem;display:flex;flex-direction:column;gap:.7rem;box-shadow:var(--shadow-sm);transition:border-color var(--transition),box-shadow var(--transition)}
 .dk-card:hover{border-color:var(--border-accent);box-shadow:var(--shadow)}
-.dk-card-head{display:flex;align-items:center;justify-content:space-between;gap:.5rem}
-.dk-name{font-weight:700;font-size:.98rem;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.dk-card-head{display:flex;align-items:center;gap:.5rem}
+.dk-card-head .status-badge{margin-left:auto;flex-shrink:0}
+.dk-name{font-weight:700;font-size:.98rem;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1}
 .dk-meta{display:flex;flex-direction:column;gap:5px}
 .dk-row{display:flex;gap:.6rem;font-size:.8rem;align-items:baseline}
 .dk-k{color:var(--text-dim);width:52px;flex-shrink:0;text-transform:uppercase;font-size:.64rem;letter-spacing:.04em;font-weight:700;padding-top:1px}

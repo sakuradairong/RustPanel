@@ -39,15 +39,18 @@ pub async fn list_processes(_: AuthUser, query: web::Query<ListProcessesQuery>) 
     for (_, process) in sys.processes() {
         let name = process.name().to_string_lossy().to_string();
 
-        // Filter by keyword if provided
+        let pid = usize::from(process.pid()) as i32;
+
+        // Filter by keyword if provided (match process name or PID substring)
         if let Some(ref kw) = keyword {
-            if !name.to_lowercase().contains(kw.as_str()) {
+            let pid_str = pid.to_string();
+            if !name.to_lowercase().contains(kw.as_str()) && !pid_str.contains(kw.as_str()) {
                 continue;
             }
         }
 
         processes.push(ProcessInfo {
-            pid: usize::from(process.pid()) as i32,
+            pid,
             name,
             cpu: process.cpu_usage(),
             memory: process.memory(),
