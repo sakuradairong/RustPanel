@@ -195,6 +195,7 @@ async function renderDockerContainers(dc){
           if(act==='stats'){renderDockerStats(dc,id);return}
           if(act==='inspect'){openDockerDetailDrawer(dc,id,this.dataset.name||'');return}
           if(act==='exec'){openDockerExecModal(id,this.dataset.name||'');return}
+          if(act==='term'){openDockerTerminal(id,this.dataset.name||'');return}
           if(act==='remove'){
             const nm=this.dataset.name||id.substring(0,12);
             confirmDialog({title:'Remove Container',messageHtml:'Remove container <strong>'+escapeHtml(nm)+'</strong>? This cannot be undone.',okText:'Remove',danger:true,loadingText:'Removing...',onConfirm:async()=>{
@@ -272,6 +273,7 @@ async function renderDockerContainers(dc){
             <button class="btn btn-xs btn-ghost dc-act" data-id="${ct.id}" data-act="pause" ${!run?'disabled':''} title="Pause">⏸</button>
             <button class="btn btn-xs btn-ghost dc-act" data-id="${ct.id}" data-act="unpause" ${!paused?'disabled':''} title="Unpause">⏯</button>
             <button class="btn btn-xs btn-ghost dc-act" data-id="${ct.id}" data-act="exec" data-name="${escapeHtml(nm)}" ${!run?'disabled':''} title="Exec">$</button>
+            <button class="btn btn-xs btn-ghost dc-act" data-id="${ct.id}" data-act="term" data-name="${escapeHtml(nm)}" ${!run?'disabled':''} title="Terminal">⌨</button>
             <button class="btn btn-xs btn-ghost dc-act" data-id="${ct.id}" data-act="logs" title="Logs">📋</button>
             <button class="btn btn-xs btn-ghost dc-act" data-id="${ct.id}" data-act="stats" title="Stats">📊</button>
             <button class="btn btn-xs btn-ghost dc-act" data-id="${ct.id}" data-act="inspect" data-name="${escapeHtml(nm)}" title="Details">🔍</button>
@@ -367,6 +369,7 @@ async function openDockerDetailDrawer(dc,id,nameHint){
           <button class="btn btn-sm btn-ghost" id="dr-pause" ${!run?'disabled':''}>Pause</button>
           <button class="btn btn-sm btn-ghost" id="dr-unpause" ${!paused?'disabled':''}>Unpause</button>
           <button class="btn btn-sm btn-ghost" id="dr-exec" ${!run?'disabled':''}>Exec</button>
+          <button class="btn btn-sm btn-ghost" id="dr-term" ${!run?'disabled':''}>Terminal</button>
           <button class="btn btn-sm btn-ghost" id="dr-logs">Logs</button>
           <button class="btn btn-sm btn-ghost" id="dr-stats">Stats</button>
           <button class="btn btn-sm btn-ghost" id="dr-raw">Raw JSON</button>
@@ -388,6 +391,7 @@ async function openDockerDetailDrawer(dc,id,nameHint){
     d.body.querySelector('#dr-pause').onclick=()=>act('pause');
     d.body.querySelector('#dr-unpause').onclick=()=>act('unpause');
     d.body.querySelector('#dr-exec').onclick=()=>{d.close();openDockerExecModal(id,nm)};
+    d.body.querySelector('#dr-term').onclick=()=>{d.close();openDockerTerminal(id,nm)};
     d.body.querySelector('#dr-logs').onclick=()=>{d.close();renderDockerLogs(dc,id)};
     d.body.querySelector('#dr-stats').onclick=()=>{d.close();renderDockerStats(dc,id)};
     d.body.querySelector('#dr-raw').onclick=()=>{
@@ -525,7 +529,7 @@ function openDockerExecModal(id,nameHint){
         <option value="env"></option>
       </datalist>
     </div>
-    <div class="text-xs text-dim" style="margin:-4px 0 8px">Runs via <code>/bin/sh -c</code> inside the container. Interactive TTY/WebSocket terminal is not wired yet.</div>
+    <div class="text-xs text-dim" style="margin:-4px 0 8px">One-shot via <code>/bin/sh -c</code>. For a live shell, use <strong>Terminal</strong>.</div>
     <div class="flex justify-between items-center mb-1">
       <span class="text-sm text-muted">Output</span>
       <button class="btn btn-xs btn-ghost" id="dc-exec-copy" type="button">Copy</button>
@@ -534,9 +538,11 @@ function openDockerExecModal(id,nameHint){
     <div id="dc-exec-err" class="error-msg" style="display:none"></div>
     <div class="btn-row">
       <button class="btn btn-sm btn-ghost" id="dc-exec-close">Close</button>
+      <button class="btn btn-sm btn-ghost" id="dc-exec-term">Open Terminal</button>
       <button class="btn btn-sm btn-success" id="dc-exec-run">Run</button>
     </div>`,{maxWidth:'560px'});
   m.root.querySelector('#dc-exec-close').onclick=m.close;
+  m.root.querySelector('#dc-exec-term').onclick=()=>{m.close();openDockerTerminal(id,nameHint)};
   m.root.querySelector('#dc-exec-copy').onclick=async()=>{
     const t=m.root.querySelector('#dc-exec-out').textContent||'';
     try{await navigator.clipboard.writeText(t);showToast('Copied','success')}
@@ -567,6 +573,66 @@ function openDockerExecModal(id,nameHint){
   };
   m.root.querySelector('#dc-exec-run').onclick=run;
   m.root.querySelector('#dc-exec-cmd').addEventListener('keydown',e=>{if(e.key==='Enter')run()});
+}
+
+function openDockerTerminal(id,nameHint){
+  const title=nameHint?('Terminal · '+nameHint):'Terminal';
+  const m=openModal(`
+    <h3>${escapeHtml(title)}</h3>
+    <div class="flex justify-between items-center mb-2">
+      <span class="text-sm text-muted" id="dc-term-status">Connecting…</span>
+      <select id="dc-term-shell" style="width:auto;padding:2px 8px">
+        <option value="/bin/sh">/bin/sh</option>
+        <option value="/bin/bash">/bin/bash</option>
+      </select>
+    </div>
+    <pre id="dc-term-out" class="drawer-pre term-screen" style="min-height:280px;max-height:420px;background:#0b1220;color:#d1fae5"></pre>
+    <div class="flex gap-2 mt-2">
+      <input type="text" id="dc-term-in" placeholder="Type a command and press Enter" style="flex:1" autocomplete="off" spellcheck="false">
+      <button class="btn btn-sm btn-success" id="dc-term-send">Send</button>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-sm btn-ghost" id="dc-term-clear">Clear</button>
+      <button class="btn btn-sm btn-ghost" id="dc-term-close">Close</button>
+    </div>`,{maxWidth:'720px',onClose:()=>{try{if(ws&&ws.readyState<=1)ws.close()}catch(e){}}});
+  const out=m.root.querySelector('#dc-term-out');
+  const inp=m.root.querySelector('#dc-term-in');
+  const status=m.root.querySelector('#dc-term-status');
+  const append=(t)=>{
+    // Strip common TTY noise (cursor position report) so prompts stay readable without xterm.js
+    const cleaned=String(t||'').replace(/\x1b\[[0-9;]*[A-Za-z]/g,'');
+    if(!cleaned)return;
+    out.textContent+=cleaned;out.scrollTop=out.scrollHeight;
+  };
+  let ws=null;
+  const connect=()=>{
+    try{if(ws)ws.close()}catch(e){}
+    out.textContent='';
+    const token=getToken()||'';
+    const shell=m.root.querySelector('#dc-term-shell').value||'/bin/sh';
+    const proto=location.protocol==='https:'?'wss:':'ws:';
+    const url=proto+'//'+location.host+'/api/v1/docker/containers/'+encodeURIComponent(id)+'/terminal?token='+encodeURIComponent(token)+'&shell='+encodeURIComponent(shell);
+    status.textContent='Connecting…';status.style.color='var(--text-dim)';
+    ws=new WebSocket(url);
+    ws.onopen=()=>{status.textContent='Connected · '+shell;status.style.color='var(--success)';inp.focus()};
+    ws.onmessage=(ev)=>{append(typeof ev.data==='string'?ev.data:String(ev.data))};
+    ws.onerror=()=>{status.textContent='Error';status.style.color='var(--error)'};
+    ws.onclose=()=>{status.textContent='Disconnected';status.style.color='var(--warning)'};
+  };
+  const send=()=>{
+    const line=inp.value;
+    if(ws&&ws.readyState===1){
+      ws.send(line+'\n');
+      append(line+'\n');
+      inp.value='';
+    } else showToast('Terminal not connected','error');
+  };
+  m.root.querySelector('#dc-term-send').onclick=send;
+  inp.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();send()}});
+  m.root.querySelector('#dc-term-clear').onclick=()=>{out.textContent=''};
+  m.root.querySelector('#dc-term-close').onclick=()=>{try{if(ws)ws.close()}catch(e){}m.close()};
+  m.root.querySelector('#dc-term-shell').onchange=connect;
+  connect();
 }
 
 function renderDockerCreate(dc){
@@ -1988,32 +2054,45 @@ async function renderWebServerSsl(tc){
       </div>`;
     }
 
-    // Certificate table
+    // Certificate cards
     if(certs.length===0){
-      html+='<div class="card"><div class="text-muted" style="text-align:center;padding:2rem">No certificates. Click "Issue" to create one.</div></div>';
+      html+='<div class="empty-state"><div class="icon">🔒</div><div>No certificates. Click "+ Issue" to create one.</div></div>';
     } else {
-      html+='<div class="card"><div class="table-wrap"><table><thead><tr><th>Domain</th><th>Subject Alt Names</th><th>Expiry</th><th>Key Type</th><th>Actions</th></tr></thead><tbody>';
+      html+='<div class="dk-grid">';
       certs.forEach(c=>{
-        const domain=escapeHtml(c.domain||'?');
+        const domain=c.domain||'?';
         const expiry=c.expiry||'Unknown';
         const expDate=new Date(expiry);
-        const expStr=isNaN(expDate.getTime())?escapeHtml(expiry):expDate.toLocaleString();
-        const expiringSoon=!isNaN(expDate.getTime())&&(expDate-Date.now())<30*24*60*60*1000;
-        const sans=(c.san||[]).filter(s=>s!==c.domain).map(s=>escapeHtml(s)).join(', ');
+        const valid=!isNaN(expDate.getTime());
+        const msLeft=valid?(expDate-Date.now()):null;
+        const expired=valid&&msLeft<0;
+        const expiringSoon=valid&&msLeft>=0&&msLeft<30*24*60*60*1000;
+        const daysLeft=valid?Math.ceil(msLeft/(24*60*60*1000)):null;
+        const expStr=valid?expDate.toLocaleDateString():String(expiry);
+        let badge='running', badgeText='Valid';
+        if(expired){badge='exited';badgeText='Expired'}
+        else if(expiringSoon){badge='paused';badgeText=daysLeft+'d left'}
+        else if(valid){badgeText=daysLeft+'d left'}
+        const sans=(c.san||[]).filter(s=>s!==c.domain).join(', ');
         const keyType=c.key_type||'';
-        html+=`<tr>
-          <td><strong>${domain}</strong></td>
-          <td style="font-size:0.8rem;color:var(--text-muted);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(sans)}">${sans||'—'}</td>
-          <td style="color:${expiringSoon?'var(--error)':'var(--text)'};white-space:nowrap">${expStr}</td>
-          <td style="font-size:0.8rem;color:var(--text-dim)">${keyType?escapeHtml(keyType):'—'}</td>
-          <td style="white-space:nowrap">
-            <button class="btn btn-sm ssl-renew-btn" data-domain="${domain}">Renew</button>
-            <button class="btn btn-sm ssl-deploy-btn" data-domain="${domain}">Deploy</button>
-            <button class="btn btn-sm btn-danger ssl-delete-btn" data-domain="${domain}">✕</button>
-          </td>
-        </tr>`;
+        html+=`<div class="dk-card">
+          <div class="dk-card-head">
+            <div class="dk-name" title="${escapeHtml(domain)}">${escapeHtml(domain)}</div>
+            <span class="status-badge ${badge}">${escapeHtml(badgeText)}</span>
+          </div>
+          <div class="dk-meta">
+            <div class="dk-row"><span class="dk-k">Expiry</span><span class="dk-v">${escapeHtml(expStr)}</span></div>
+            <div class="dk-row"><span class="dk-k">SAN</span><span class="dk-v" title="${escapeHtml(sans)}">${escapeHtml(sans||'—')}</span></div>
+            <div class="dk-row"><span class="dk-k">Key</span><span class="dk-v">${escapeHtml(keyType||'—')}</span></div>
+          </div>
+          <div class="dk-actions">
+            <button class="btn btn-xs btn-ghost ssl-renew-btn" data-domain="${escapeHtml(domain)}">Renew</button>
+            <button class="btn btn-xs btn-ghost ssl-deploy-btn" data-domain="${escapeHtml(domain)}">Deploy</button>
+            <button class="btn btn-xs btn-danger ssl-delete-btn" data-domain="${escapeHtml(domain)}">Delete</button>
+          </div>
+        </div>`;
       });
-      html+='</tbody></table></div></div>';
+      html+='</div>';
     }
 
     tc.innerHTML=html;
@@ -2047,29 +2126,77 @@ async function renderWebServerSsl(tc){
     tc.querySelectorAll('.ssl-deploy-btn').forEach(btn=>{
       btn.addEventListener('click',async function(){
         const domain=this.dataset.domain;
-        const siteName=prompt('Deploy certificate to which nginx site? (site config filename)',domain);
-        if(!siteName)return;
-        this.disabled=true;this.textContent='...';
+        let sites=[];
         try{
-          const r=await api('/ssl/deploy',{method:'POST',body:JSON.stringify({site_name:siteName,domain})});
-          if(r.success) showToast('Deployed to '+siteName,'success');
-          else showToast(r.message||'Deploy failed','error');
-        }catch(e){if(e.message!=='Unauthorized')showToast('Error: '+e.message,'error')}
-        renderWebServerSsl(tc);
+          const sj=await api('/webserver/sites');
+          sites=(sj.data||[]).map(s=>s.name||s.filename||s).filter(Boolean);
+        }catch(e){}
+        const optsHtml=sites.length
+          ? sites.map(n=>`<option value="${escapeHtml(n)}"${n===domain||n===domain+'.conf'?' selected':''}>${escapeHtml(n)}</option>`).join('')
+          : '';
+        const m=openModal(`
+          <h3>Deploy Certificate</h3>
+          <p class="text-sm text-muted mb-2">Deploy <strong>${escapeHtml(domain)}</strong> to an nginx site config.</p>
+          <div class="field"><label>Site</label>
+            ${sites.length
+              ? `<select id="ssl-dep-site">${optsHtml}<option value="__custom__">Custom…</option></select>`
+              : `<input type="text" id="ssl-dep-site" placeholder="example.com" value="${escapeHtml(domain)}">`}
+          </div>
+          <div class="field" id="ssl-dep-custom-wrap" style="display:none">
+            <label>Custom site filename</label>
+            <input type="text" id="ssl-dep-custom" placeholder="example.com" value="${escapeHtml(domain)}">
+          </div>
+          <div class="error-msg" id="ssl-dep-err" style="display:none"></div>
+          <div class="btn-row">
+            <button class="btn btn-sm btn-ghost" id="ssl-dep-cancel">Cancel</button>
+            <button class="btn btn-sm btn-success" id="ssl-dep-ok">Deploy</button>
+          </div>`,{maxWidth:'420px'});
+        const siteEl=m.root.querySelector('#ssl-dep-site');
+        const customWrap=m.root.querySelector('#ssl-dep-custom-wrap');
+        if(siteEl&&siteEl.tagName==='SELECT'){
+          siteEl.addEventListener('change',()=>{
+            customWrap.style.display=siteEl.value==='__custom__'?'':'none';
+          });
+        }
+        m.root.querySelector('#ssl-dep-cancel').onclick=m.close;
+        m.root.querySelector('#ssl-dep-ok').onclick=async function(){
+          let siteName='';
+          if(siteEl.tagName==='SELECT'){
+            siteName=siteEl.value==='__custom__'
+              ?(m.root.querySelector('#ssl-dep-custom').value.trim())
+              :siteEl.value;
+          } else siteName=siteEl.value.trim();
+          const errEl=m.root.querySelector('#ssl-dep-err');
+          if(!siteName){errEl.textContent='Site name required';errEl.style.display='block';return}
+          errEl.style.display='none';this.disabled=true;this.textContent='Deploying…';
+          try{
+            const r=await api('/ssl/deploy',{method:'POST',body:JSON.stringify({site_name:siteName,domain})});
+            if(r.success){showToast('Deployed to '+siteName,'success');m.close();renderWebServerSsl(tc)}
+            else{errEl.textContent=r.message||'Deploy failed';errEl.style.display='block';this.disabled=false;this.textContent='Deploy'}
+          }catch(e){
+            if(e.message!=='Unauthorized'){errEl.textContent=e.message;errEl.style.display='block'}
+            this.disabled=false;this.textContent='Deploy';
+          }
+        };
       });
     });
 
     // Delete
     tc.querySelectorAll('.ssl-delete-btn').forEach(btn=>{
-      btn.addEventListener('click',async function(){
+      btn.addEventListener('click',function(){
         const domain=this.dataset.domain;
-        if(!confirm('Delete certificate for '+domain+'?'))return;
-        this.disabled=true;this.textContent='...';
-        try{
-          const r=await api('/ssl/certificates/'+encodeURIComponent(domain),{method:'DELETE'});
-          if(r.success){showToast('Deleted','success');renderWebServerSsl(tc)}
-          else showToast(r.message||'Delete failed','error');
-        }catch(e){if(e.message!=='Unauthorized')showToast('Error: '+e.message,'error')}
+        confirmDialog({
+          title:'Delete Certificate',
+          message:'Delete certificate for '+domain+'? This cannot be undone.',
+          danger:true,
+          okText:'Delete',
+          onConfirm:async()=>{
+            const r=await api('/ssl/certificates/'+encodeURIComponent(domain),{method:'DELETE'});
+            if(!r.success)throw new Error(r.message||'Delete failed');
+            showToast('Deleted','success');
+            renderWebServerSsl(tc);
+          }
+        });
       });
     });
   }catch(e){
@@ -2093,10 +2220,11 @@ async function renderWebServerSslAccount(tc){
         <option value="zerossl">ZeroSSL</option>
         <option value="buypass">Buypass</option>
         <option value="google">Google Public CA</option>
-  </div>
-  <div class="field">
-    <p class="text-sm text-muted">By registering, you agree to the ACME Subscriber Agreement (https://letsencrypt.org/repository/)</p>
-  </div>
+      </select>
+    </div>
+    <div class="field">
+      <p class="text-sm text-muted">By registering, you agree to the ACME Subscriber Agreement (https://letsencrypt.org/repository/)</p>
+    </div>
     <div id="acct-error" class="error-msg" style="display:none"></div>
     <div class="btn-row mt-3">
       <button class="btn btn-sm" id="acct-back">Back</button>
@@ -2217,9 +2345,8 @@ async function renderWebServerSslIssue(tc,providers){
       }
       const r=await api('/ssl/issue',{method:'POST',body:JSON.stringify(body)});
       if(r.success){
-        resEl.style.display='block';
-        resEl.innerHTML='<span style="color:var(--success)">✓ Certificate issued!</span><pre style="margin-top:8px;background:var(--bg);padding:8px;border-radius:4px;font-size:0.8rem;max-height:200px;overflow-y:auto">'+escapeHtml(r.data?.output||'')+'</pre>';
-        btn.textContent='Done';
+        showToast('Certificate issued','success');
+        renderWebServerSsl(tc);
       } else {
         errEl.textContent=r.message||'Issue failed';
         errEl.style.display='block';btn.disabled=false;btn.textContent='Issue Certificate';

@@ -1,5 +1,9 @@
-use actix_web::{web, HttpResponse};
+use actix_web::{web, Error as ActixError, HttpRequest, HttpResponse};
+use bollard::container::LogOutput;
+use bollard::exec::StartExecResults;
+use futures_util::StreamExt;
 use serde::Deserialize;
+use tokio::io::AsyncWriteExt;
 
 use crate::api::auth::AuthUser;
 use crate::api::{ResponseStructure, ResponseStructureError};
@@ -290,6 +294,126 @@ pub async fn exec_container(
             message: err.to_string(),
         }),
     }
+}
+
+fn extract_token(req: &HttpRequest) -> Option<String> {
+    req.headers()
+        .get("Authorization")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| {
+            if let Some(stripped) = s.strip_prefix("Bearer ") {
+                stripped.to_string()
+            } else {
+                s.to_string()
+            }
+        })
+        .or_else(|| {
+            web::Query::<std::collections::HashMap<String, String>>::from_query(req.query_string())
+                .ok()
+                .and_then(|params| params.get("token").cloned())
+        })
+}
+
+/// Interactive container terminal over WebSocket.
+/// Auth via `?token=` (browser WebSocket cannot set Authorization).
+/// Optional `?shell=/bin/bash` (default `/bin/sh`).
+pub async fn container_terminal(
+    req: HttpRequest,
+    stream: web::Payload,
+    path: web::Path<ContainerIdPath>,
+) -> Result<HttpResponse, ActixError> {
+    let token = extract_token(&req);
+    let ok = token
+        .as_deref()
+        .map(|t| crate::api::auth::decode_jwt(t).is_ok())
+        .unwrap_or(false);
+    if !ok {
+        return Ok(HttpResponse::Unauthorized().json(serde_json::json!({
+            "success": false,
+            "code": 401,
+            "message": "Unauthorized"
+        })));
+    }
+
+    let container_id = path.id.clone();
+    let shell = web::Query::<std::collections::HashMap<String, String>>::from_query(req.query_string())
+        .ok()
+        .and_then(|q| q.get("shell").cloned())
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| String::from("/bin/sh"));
+
+    let (response, mut session, mut msg_stream) = actix_ws::handle(&req, stream)?;
+
+    actix_web::rt::spawn(async move {
+        let attached = match container::exec_interactive(&container_id, vec![shell]).await {
+            Ok(StartExecResults::Attached { output, input }) => Some((output, input)),
+            Ok(StartExecResults::Detached) => {
+                let _ = session
+                    .text("error: exec detached unexpectedly\r\n")
+                    .await;
+                let _ = session.clone().close(None).await;
+                None
+            }
+            Err(e) => {
+                let _ = session.text(format!("error: {}\r\n", e)).await;
+                let _ = session.clone().close(None).await;
+                None
+            }
+        };
+
+        let Some((mut output, mut input)) = attached else {
+            return;
+        };
+
+        let mut session_out = session.clone();
+        let reader = actix_web::rt::spawn(async move {
+            while let Some(item) = output.next().await {
+                match item {
+                    Ok(LogOutput::StdOut { message })
+                    | Ok(LogOutput::StdErr { message })
+                    | Ok(LogOutput::Console { message }) => {
+                        let text = String::from_utf8_lossy(&message).into_owned();
+                        if session_out.text(text).await.is_err() {
+                            break;
+                        }
+                    }
+                    Ok(LogOutput::StdIn { .. }) => {}
+                    Err(_) => break,
+                }
+            }
+            let _ = session_out.close(None).await;
+        });
+
+        while let Some(Ok(msg)) = msg_stream.recv().await {
+            match msg {
+                actix_ws::Message::Text(text) => {
+                    if input.write_all(text.as_bytes()).await.is_err() {
+                        break;
+                    }
+                    let _ = input.flush().await;
+                }
+                actix_ws::Message::Binary(bin) => {
+                    if input.write_all(&bin).await.is_err() {
+                        break;
+                    }
+                    let _ = input.flush().await;
+                }
+                actix_ws::Message::Ping(bytes) => {
+                    if session.pong(&bytes).await.is_err() {
+                        break;
+                    }
+                }
+                actix_ws::Message::Close(_) => break,
+                _ => {}
+            }
+        }
+
+        let _ = input.shutdown().await;
+        reader.abort();
+        let _ = session.close(None).await;
+    });
+
+    Ok(response)
 }
 
 pub async fn get_container_logs(

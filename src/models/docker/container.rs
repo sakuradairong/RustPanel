@@ -289,6 +289,48 @@ pub async fn exec(
     Ok(output)
 }
 
+/// Start an interactive TTY exec session (stdin + stdout). Caller bridges I/O.
+pub async fn exec_interactive(
+    container_id: &str,
+    cmd: Vec<String>,
+) -> Result<bollard::exec::StartExecResults, Box<dyn Error + Send + Sync>> {
+    use bollard::exec::{CreateExecOptions, StartExecOptions};
+
+    if cmd.is_empty() {
+        return Err(Box::new(DockerContainerError {
+            message: "command is required".into(),
+        }));
+    }
+
+    let client = docker()?;
+    let created = client
+        .create_exec(
+            container_id,
+            CreateExecOptions {
+                attach_stdin: Some(true),
+                attach_stdout: Some(true),
+                attach_stderr: Some(true),
+                tty: Some(true),
+                cmd: Some(cmd),
+                ..Default::default()
+            },
+        )
+        .await?;
+
+    let results = client
+        .start_exec(
+            &created.id,
+            Some(StartExecOptions {
+                detach: false,
+                tty: true,
+                output_capacity: Some(1024 * 64),
+            }),
+        )
+        .await?;
+
+    Ok(results)
+}
+
 pub async fn logs(
     container_id: &str,
     tail: usize,

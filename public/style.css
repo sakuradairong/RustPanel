@@ -183,7 +183,7 @@ td.clickable:hover{text-decoration:underline;color:var(--secondary)}
 .drawer-kv .k{color:var(--text-dim)}
 .drawer-kv .v{color:var(--text);word-break:break-word;font-family:var(--mono);font-size:.8rem}
 .drawer-actions{display:flex;flex-wrap:wrap;gap:.4rem;margin-top:.3rem}
-.drawer-pre{background:var(--bg-elevated);border:1px solid var(--border);border-radius:8px;padding:.7rem .8rem;font-family:var(--mono);font-size:.75rem;max-height:220px;overflow:auto;white-space:pre-wrap;color:var(--text-muted)}
+.term-screen{font-family:var(--mono);white-space:pre-wrap;word-break:break-all;line-height:1.45}
 
 /* ── Batch action bar ── */
 .dk-batch{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;margin:0 0 .85rem;padding:.55rem .75rem;background:var(--bg-elevated);border:1px dashed var(--border);border-radius:10px;min-height:40px;opacity:.55;pointer-events:none}

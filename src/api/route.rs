@@ -53,6 +53,7 @@ pub fn v1() -> actix_web::Scope {
                     .service(web::resource("/containers/{id}/pause").route(web::post().to(v1::docker::pause_container)))
                     .service(web::resource("/containers/{id}/unpause").route(web::post().to(v1::docker::unpause_container)))
                     .service(web::resource("/containers/{id}/exec").route(web::post().to(v1::docker::exec_container)))
+                    .service(web::resource("/containers/{id}/terminal").route(web::get().to(v1::docker::container_terminal)))
                     .service(web::resource("/containers/{id}/logs").route(web::get().to(v1::docker::get_container_logs)))
                     .service(web::resource("/containers/{id}/inspect").route(web::get().to(v1::docker::inspect_container)))
                     .service(web::resource("/containers/{id}/stats").route(web::get().to(v1::docker::container_stats)))
