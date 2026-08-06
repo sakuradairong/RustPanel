@@ -423,10 +423,40 @@ function formatSize(bytes){
 // ── File Manager ──
 let fileListState={path:'/',page:1};
 
+// Pick an icon for a file by extension.
+function fileIcon(name){
+  const ext=(String(name).split('.').pop()||'').toLowerCase();
+  if(['png','jpg','jpeg','gif','webp','svg','bmp','ico'].indexOf(ext)>=0)return '🖼️';
+  if(['zip','tar','gz','tgz','bz2','xz','rar','7z'].indexOf(ext)>=0)return '🗜️';
+  if(['js','ts','jsx','tsx','rs','go','py','java','c','cpp','h','sh','rb','php','html','css','json','yaml','yml','toml','xml','md'].indexOf(ext)>=0)return '📜';
+  if(['mp4','mkv','mov','avi','webm'].indexOf(ext)>=0)return '🎞️';
+  if(['mp3','wav','flac','ogg'].indexOf(ext)>=0)return '🎵';
+  if(ext==='pdf')return '📕';
+  return '📄';
+}
+
+// Render a clickable breadcrumb for the given absolute path.
+function renderFileBreadcrumb(path){
+  const el=document.getElementById('file-breadcrumb');
+  if(!el)return;
+  const parts=String(path||'/').split('/').filter(Boolean);
+  let acc='';
+  let html='<span class="crumb" data-path="/">🏠 /</span>';
+  parts.forEach(seg=>{
+    acc+='/'+seg;
+    html+='<span class="crumb-sep">/</span><span class="crumb" data-path="'+escapeHtml(acc)+'">'+escapeHtml(seg)+'</span>';
+  });
+  el.innerHTML=html;
+  el.querySelectorAll('.crumb[data-path]').forEach(cr=>{
+    cr.addEventListener('click',()=>{fileListState.path=cr.dataset.path;fileListState.page=1;loadFileList()});
+  });
+}
+
 async function renderFileList(){
   const c=document.getElementById('content');
   if(!c)return;
   c.innerHTML=`
+  <div id="file-breadcrumb" class="file-breadcrumb"></div>
   <div class="file-path">
     <input type="text" id="file-path-input" value="${fileListState.path}" placeholder="/">
     <button class="btn btn-sm" id="file-go-btn">Go</button>
@@ -456,18 +486,22 @@ async function loadFileList(){
     const j=await api('/file/list?path='+encodeURIComponent(path)+'&current='+fileListState.page+'&pageSize=50');
     if(!j.success){container.innerHTML='<div class="error-msg">Failed to load directory</div>';return}
     const d=j.data;
+    const curPath=d.path||path;
+    renderFileBreadcrumb(curPath);
+    const inputEl=document.getElementById('file-path-input');
+    if(inputEl)inputEl.value=curPath;
     let html='<div class="table-wrap"><table class="file-list-table"><thead><tr><th>Name</th><th>Size</th><th>Modified</th></tr></thead><tbody>';
     if(d.path&&d.path!==path){
       const parent=d.path.replace(/\/?[^\/]*\/?$/,'')||'/';
-      html+=`<tr><td class="clickable" data-path="${escapeHtml(parent)}">.. (parent)</td><td></td><td></td></tr>`;
+      html+=`<tr><td class="clickable" data-path="${escapeHtml(parent)}" data-type="dir">↩ .. (parent)</td><td></td><td></td></tr>`;
     }
     (d.dirs||[]).forEach(dir=>{
-      const fullPath=(path.endsWith('/')?path:path+'/')+dir.name;
+      const fullPath=(curPath.endsWith('/')?curPath:curPath+'/')+dir.name;
       html+=`<tr><td class="clickable" data-path="${escapeHtml(fullPath)}" data-type="dir">📁 ${escapeHtml(dir.name)}</td><td></td><td>${dir.modified_time?formatTime(dir.modified_time):''}</td></tr>`;
     });
     (d.files||[]).forEach(f=>{
-      const fullPath=(path.endsWith('/')?path:path+'/')+f.name;
-      html+=`<tr><td class="clickable" data-path="${escapeHtml(fullPath)}" data-type="file">${escapeHtml(f.name)}</td><td>${f.size!=null?formatSize(f.size):''}</td><td>${f.modified_time?formatTime(f.modified_time):''}</td></tr>`;
+      const fullPath=(curPath.endsWith('/')?curPath:curPath+'/')+f.name;
+      html+=`<tr><td class="clickable" data-path="${escapeHtml(fullPath)}" data-type="file">${fileIcon(f.name)} ${escapeHtml(f.name)}</td><td>${f.size!=null?formatSize(f.size):''}</td><td>${f.modified_time?formatTime(f.modified_time):''}</td></tr>`;
     });
     html+='</tbody></table></div>';
     container.innerHTML=html;

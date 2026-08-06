@@ -262,6 +262,12 @@ td.clickable:hover{text-decoration:underline;color:var(--secondary)}
 .app-actions{display:flex;gap:.5rem;margin-top:.1rem}
 .app-actions .btn{flex:1}
 
+/* ── File manager breadcrumb (1Panel-style) ── */
+.file-breadcrumb{display:flex;flex-wrap:wrap;align-items:center;gap:2px;margin-bottom:.75rem;font-size:.85rem;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:.5rem .75rem}
+.file-breadcrumb .crumb{color:var(--primary);cursor:pointer;padding:1px 6px;border-radius:5px;white-space:nowrap}
+.file-breadcrumb .crumb:hover{background:var(--bg-elevated);text-decoration:underline}
+.file-breadcrumb .crumb-sep{color:var(--text-dim)}
+
 /* ── System Info cards (1Panel-style) ── */
 .info-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:.85rem}
 .info-item{padding:.9rem 1.1rem}
