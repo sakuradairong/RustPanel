@@ -168,6 +168,9 @@ pub async fn monitor_sse(req: HttpRequest) -> HttpResponse {
                 .insert_header(("Cache-Control", "no-cache"))
                 .insert_header(("Connection", "keep-alive"))
                 .insert_header(("Access-Control-Allow-Origin", "*"))
+                // Prevent the Compress middleware from buffering/compressing the
+                // stream: SSE must be flushed per-event, and brotli/gzip buffers it.
+                .insert_header(("Content-Encoding", "identity"))
                 .streaming(monitor_stream());
         }
     }
