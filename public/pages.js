@@ -71,13 +71,14 @@ async function renderDocker(){
   if(!c)return;
   cleanupPage();
   c.innerHTML=`
-  <div class="flex justify-between items-center mb-4">
+  <div class="flex justify-between items-center mb-4 flex-wrap gap-2">
     <h2 style="font-size:1.1rem;font-weight:600">Docker</h2>
-    <div>
-      <button class="btn btn-sm ${dockerTab==='containers'?'btn-success':''}" id="dt-con">Containers</button>
-      <button class="btn btn-sm" id="dt-img">Images</button>
-      <button class="btn btn-sm" id="dt-vol" style="margin-left:2px">Volumes</button>
-      <button class="btn btn-sm" id="dt-net">Networks</button>
+    <div class="flex gap-2">
+      <button class="btn btn-sm ${dockerTab==='containers'?'btn-success':'btn-ghost'}" id="dt-con">Containers</button>
+      <button class="btn btn-sm ${dockerTab==='images'?'btn-success':'btn-ghost'}" id="dt-img">Images</button>
+      <button class="btn btn-sm ${dockerTab==='volumes'?'btn-success':'btn-ghost'}" id="dt-vol">Volumes</button>
+      <button class="btn btn-sm ${dockerTab==='networks'?'btn-success':'btn-ghost'}" id="dt-net">Networks</button>
+    </div>
   </div>
   <div id="docker-content">Loading...</div>`;
   document.getElementById('dt-con').onclick=()=>{dockerTab='containers';renderDockerTab()};
