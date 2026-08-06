@@ -1087,6 +1087,8 @@ async function loadLogContent(filePath){
     } else {
       area.textContent=text;
     }
+    // Auto-scroll to the newest lines at the bottom.
+    area.scrollTop=area.scrollHeight;
   }catch(e){
     if(e.message!=='Unauthorized')area.textContent='Error: '+e.message;
   }
