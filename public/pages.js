@@ -2004,26 +2004,56 @@ function installSoftware(soft){
     <h3>Install ${escapeHtml(soft)}</h3>
     <div class="field">
       <label>Version</label>
-      <input type="text" id="inst-version" placeholder="latest">
+      <select id="inst-version"><option value="">Loading versions…</option></select>
     </div>
+    <div class="text-xs text-dim" id="inst-hint" style="margin:-4px 0 6px">Fetching versions from the official upstream…</div>
     <div class="error-msg" id="inst-err" style="display:none"></div>
     <div class="btn-row">
       <button class="btn btn-sm btn-ghost" id="inst-cancel">Cancel</button>
-      <button class="btn btn-sm btn-success" id="inst-go">Install</button>
-    </div>`,{maxWidth:'400px'});
+      <button class="btn btn-sm btn-success" id="inst-go" disabled>Install</button>
+    </div>`,{maxWidth:'420px'});
+  const go=m.root.querySelector('#inst-go');
+  const err=m.root.querySelector('#inst-err');
+  const hint=m.root.querySelector('#inst-hint');
   m.root.querySelector('#inst-cancel').addEventListener('click',m.close);
-  m.root.querySelector('#inst-go').addEventListener('click',async()=>{
-    const version=m.root.querySelector('#inst-version').value.trim();
-    const btn=m.root.querySelector('#inst-go');
-    const err=m.root.querySelector('#inst-err');
-    btn.disabled=true;btn.textContent='Installing...';err.style.display='none';
+
+  function useManualInput(msg){
+    const field=m.root.querySelector('#inst-version').parentElement;
+    field.innerHTML='<label>Version</label><input type="text" id="inst-version" placeholder="latest">';
+    hint.textContent=msg;
+  }
+
+  // Populate the version dropdown from the software's upstream source.
+  (async()=>{
+    try{
+      const r=await api('/installer/versions?software='+encodeURIComponent(soft));
+      const list=(r&&r.success&&Array.isArray(r.data))?r.data:[];
+      if(list.length>0){
+        const sel=m.root.querySelector('#inst-version');
+        sel.innerHTML='<option value="">latest</option>'+list.map(v=>`<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join('');
+        hint.textContent=list.length+' versions from the official upstream source (blank = latest).';
+      }else{
+        useManualInput('No upstream version list — enter a version manually (blank = latest).');
+      }
+    }catch(e){
+      if(e.message==='Unauthorized'){m.close();return}
+      useManualInput('Could not fetch versions — enter a version manually (blank = latest).');
+    }finally{
+      go.disabled=false;
+    }
+  })();
+
+  go.addEventListener('click',async()=>{
+    const el=m.root.querySelector('#inst-version');
+    const version=((el&&el.value)||'').trim();
+    go.disabled=true;go.textContent='Installing...';err.style.display='none';
     try{
       const r=await api('/installer/install',{method:'POST',body:JSON.stringify({software:soft,version:version||undefined})});
       if(r.success){showToast(soft+' installed successfully','success');m.close()}
-      else{err.textContent=r.message||'Install failed';err.style.display='block';btn.disabled=false;btn.textContent='Install'}
+      else{err.textContent=r.message||'Install failed';err.style.display='block';go.disabled=false;go.textContent='Install'}
     }catch(e){
       if(e.message==='Unauthorized'){m.close();return}
-      err.textContent='Error: '+e.message;err.style.display='block';btn.disabled=false;btn.textContent='Install';
+      err.textContent='Error: '+e.message;err.style.display='block';go.disabled=false;go.textContent='Install';
     }
   });
 }
