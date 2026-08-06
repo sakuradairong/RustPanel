@@ -22,6 +22,8 @@ pub struct CreateContainerBody {
     pub name: String,
     pub image: String,
     pub cmd: Option<Vec<String>>,
+    pub ports: Option<Vec<String>>,
+    pub env: Option<Vec<String>>,
 }
 
 #[derive(Deserialize)]
@@ -137,7 +139,15 @@ pub async fn list_containers(_: AuthUser, query: web::Query<ListContainersQuery>
 }
 
 pub async fn create_container(_: AuthUser, body: web::Json<CreateContainerBody>) -> HttpResponse {
-    match container::create(&body.name, &body.image, body.cmd.clone()).await {
+    match container::create(
+        &body.name,
+        &body.image,
+        body.cmd.clone(),
+        body.ports.clone().unwrap_or_default(),
+        body.env.clone().unwrap_or_default(),
+    )
+    .await
+    {
         Ok(id) => HttpResponse::Ok().json(ResponseStructure {
             success: true, code: 200, message: String::from("success"),
             data: Some(serde_json::json!({"container_id": id})),

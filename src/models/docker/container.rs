@@ -1,8 +1,9 @@
+use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
 
 use bollard::container::LogOutput;
-use bollard::models::{ContainerCreateBody, PortSummaryTypeEnum};
+use bollard::models::{ContainerCreateBody, HostConfig, PortBinding, PortSummaryTypeEnum};
 use bollard::query_parameters::{
     CreateContainerOptions, ListContainersOptions, LogsOptions, RemoveContainerOptions,
     RestartContainerOptions, StartContainerOptions, StatsOptions, StopContainerOptions,
@@ -97,13 +98,54 @@ pub async fn create(
     name: &str,
     image: &str,
     cmd: Option<Vec<String>>,
+    ports: Vec<String>,
+    env: Vec<String>,
 ) -> Result<String, Box<dyn Error + Send + Sync>> {
     let client = docker()?;
+
+    // Parse port mappings like "8080:80" or "8080:80/udp" (host:container[/proto]).
+    // Docker auto-exposes ports that appear in HostConfig.port_bindings.
+    let mut port_bindings: HashMap<String, Option<Vec<PortBinding>>> = HashMap::new();
+    for p in &ports {
+        let (mapping, proto) = match p.split_once('/') {
+            Some((m, pr)) => (m.trim(), pr.trim()),
+            None => (p.trim(), "tcp"),
+        };
+        if mapping.is_empty() {
+            continue;
+        }
+        let (host_port, container_port) = match mapping.split_once(':') {
+            Some((h, c)) => (h.trim().to_string(), c.trim().to_string()),
+            None => (mapping.to_string(), mapping.to_string()),
+        };
+        if container_port.is_empty() {
+            continue;
+        }
+        let key = format!("{}/{}", container_port, proto);
+        port_bindings.insert(
+            key,
+            Some(vec![PortBinding {
+                host_ip: Some("0.0.0.0".to_string()),
+                host_port: Some(host_port),
+            }]),
+        );
+    }
+
+    let host_config = if port_bindings.is_empty() {
+        None
+    } else {
+        Some(HostConfig {
+            port_bindings: Some(port_bindings),
+            ..Default::default()
+        })
+    };
 
     let config = ContainerCreateBody {
         image: Some(image.to_string()),
         cmd: cmd.clone(),
         tty: Some(true),
+        env: if env.is_empty() { None } else { Some(env) },
+        host_config,
         ..Default::default()
     };
 
