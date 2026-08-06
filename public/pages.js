@@ -12,8 +12,8 @@ async function renderFileContent(){
   c.innerHTML=`
   <div class="content-toolbar">
     <span style="flex:1;font-size:0.85rem;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(path)}</span>
-    <button class="btn btn-sm" id="file-save-btn" disabled>Save</button>
-    <button class="btn btn-sm" id="file-back-btn">Back</button>
+    <button class="btn btn-sm btn-success" id="file-save-btn" disabled>Save</button>
+    <button class="btn btn-sm btn-ghost" id="file-back-btn">Back</button>
   </div>
   <textarea class="content-area" id="file-content-area" spellcheck="false">Loading...</textarea>
   <div id="file-save-status" class="text-sm mt-2" style="color:var(--text-dim)"></div>`;
@@ -46,6 +46,7 @@ async function renderFileContent(){
         if(r.success){
           originalContent=newContent;
           statusEl.style.color='var(--success)';statusEl.textContent='Saved successfully';
+          showToast('File saved','success');
           saveBtn.disabled=true;
         } else {
           statusEl.style.color='var(--error)';statusEl.textContent=r.message||'Save failed';

@@ -264,6 +264,9 @@ td.clickable:hover{text-decoration:underline;color:var(--secondary)}
 .app-actions{display:flex;gap:.5rem;margin-top:.1rem}
 .app-actions .btn{flex:1}
 
+/* ── File editor toolbar ── */
+.content-toolbar{display:flex;align-items:center;gap:.5rem;margin-bottom:.6rem;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:.5rem .75rem}
+
 /* ── File manager breadcrumb (1Panel-style) ── */
 .file-breadcrumb{display:flex;flex-wrap:wrap;align-items:center;gap:2px;margin-bottom:.75rem;font-size:.85rem;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:.5rem .75rem}
 .file-breadcrumb .crumb{color:var(--primary);cursor:pointer;padding:1px 6px;border-radius:5px;white-space:nowrap}
