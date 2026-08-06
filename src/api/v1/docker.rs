@@ -24,6 +24,8 @@ pub struct CreateContainerBody {
     pub cmd: Option<Vec<String>>,
     pub ports: Option<Vec<String>>,
     pub env: Option<Vec<String>>,
+    pub restart_policy: Option<String>,
+    pub network_mode: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -145,6 +147,8 @@ pub async fn create_container(_: AuthUser, body: web::Json<CreateContainerBody>)
         body.cmd.clone(),
         body.ports.clone().unwrap_or_default(),
         body.env.clone().unwrap_or_default(),
+        body.restart_policy.clone(),
+        body.network_mode.clone(),
     )
     .await
     {

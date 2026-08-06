@@ -352,6 +352,15 @@ function renderDockerCreate(dc){
     <div class="field"><label>Name</label><input type="text" id="dc-name" placeholder="my-nginx"></div>
     <div class="field"><label>Ports <span class="text-dim" style="font-weight:400">(host:container, comma-separated)</span></label><input type="text" id="dc-ports" placeholder="8080:80, 5432:5432/tcp"></div>
     <div class="field"><label>Environment <span class="text-dim" style="font-weight:400">(KEY=VALUE, one per line)</span></label><textarea id="dc-env" rows="3" placeholder="TZ=UTC&#10;DEBUG=1" style="resize:vertical"></textarea></div>
+    <div class="field"><label>Restart Policy</label>
+      <select id="dc-restart">
+        <option value="no">no</option>
+        <option value="unless-stopped" selected>unless-stopped</option>
+        <option value="always">always</option>
+        <option value="on-failure">on-failure</option>
+      </select>
+    </div>
+    <div class="field"><label>Network <span class="text-dim" style="font-weight:400">(bridge / host / custom)</span></label><input type="text" id="dc-network" placeholder="bridge" value="bridge"></div>
     <div class="field"><label>Command <span class="text-dim" style="font-weight:400">(optional)</span></label><input type="text" id="dc-cmd" placeholder="optional"></div>
     <div id="dc-err" class="error-msg" style="display:none"></div>
     <div class="btn-row">
@@ -365,6 +374,8 @@ function renderDockerCreate(dc){
     const cmdStr=m.root.querySelector('#dc-cmd').value.trim();
     const portsStr=m.root.querySelector('#dc-ports').value.trim();
     const envStr=m.root.querySelector('#dc-env').value.trim();
+    const restart=m.root.querySelector('#dc-restart').value;
+    const network=m.root.querySelector('#dc-network').value.trim();
     const err=m.root.querySelector('#dc-err');
     if(!img||!nm){err.textContent='Image and name required';err.style.display='block';return}
     err.style.display='none';
@@ -376,6 +387,8 @@ function renderDockerCreate(dc){
       if(ports.length)body.ports=ports;
       const env=envStr.split(/\n+/).map(s=>s.trim()).filter(Boolean);
       if(env.length)body.env=env;
+      if(restart)body.restart_policy=restart;
+      if(network)body.network_mode=network;
       const r=await api('/docker/containers',{method:'POST',body:JSON.stringify(body)});
       if(r.success){
         showToast('Created: '+nm,'success');
@@ -2192,6 +2205,8 @@ const APP_META={
   redis:{icon:'🧩',cat:'Cache'},
   docker:{icon:'🐳',cat:'Runtime'}
 };
+let appFilterQ='';
+let appFilterCat='all';
 async function renderInstaller(){
   const c=document.getElementById('content');
   if(!c)return;
@@ -2201,6 +2216,13 @@ async function renderInstaller(){
       <h2 style="font-size:1.15rem;font-weight:700">App Store</h2>
       <div class="text-sm text-dim" style="margin-top:2px">One-click install of common server software</div>
     </div>
+  </div>
+  <div class="dk-toolbar" id="app-toolbar" style="display:none">
+    <div class="dk-toolbar-left">
+      <input type="search" class="dk-search" id="app-search" placeholder="Search apps…" value="${escapeHtml(appFilterQ)}" autocomplete="off">
+      <div class="dk-chips" id="app-chips"></div>
+    </div>
+    <span class="text-sm text-muted" id="app-count"></span>
   </div>
   <div id="installer-list">
     <div class="app-grid">
@@ -2212,32 +2234,63 @@ async function renderInstaller(){
   try{
     const j=await api('/installer/list');
     if(!j.success||!Array.isArray(j.data)){document.getElementById('installer-list').innerHTML='<div class="error-msg">Failed to load software list</div>';return}
-    let html='<div class="app-grid">';
-    j.data.forEach(s=>{
+    const items=j.data.map(s=>{
       const m=APP_META[s.name]||{icon:'📦',cat:'Software'};
-      html+=`<div class="app-card">
-        <div class="app-top">
-          <div class="app-icon">${m.icon}</div>
-          <div class="app-head">
-            <div class="app-name">${escapeHtml(s.name)}</div>
-            <span class="app-cat">${escapeHtml(m.cat)}</span>
+      return {...s,icon:m.icon,cat:m.cat};
+    });
+    const cats=['all',...Array.from(new Set(items.map(i=>i.cat)))];
+    const toolbar=document.getElementById('app-toolbar');
+    toolbar.style.display='flex';
+    document.getElementById('app-chips').innerHTML=cats.map(cat=>{
+      const n=cat==='all'?items.length:items.filter(i=>i.cat===cat).length;
+      const label=cat==='all'?'All':cat;
+      return `<button type="button" class="dk-chip${appFilterCat===cat?' active':''}" data-cat="${escapeHtml(cat)}">${escapeHtml(label)} <span>${n}</span></button>`;
+    }).join('');
+    const paint=()=>{
+      const q=appFilterQ.trim().toLowerCase();
+      const filtered=items.filter(s=>{
+        if(appFilterCat!=='all'&&s.cat!==appFilterCat)return false;
+        if(!q)return true;
+        return (s.name||'').toLowerCase().includes(q)||(s.description||'').toLowerCase().includes(q)||(s.cat||'').toLowerCase().includes(q);
+      });
+      document.getElementById('app-count').textContent=filtered.length+' app(s)';
+      document.querySelectorAll('#app-chips .dk-chip').forEach(b=>b.classList.toggle('active',b.dataset.cat===appFilterCat));
+      if(filtered.length===0){
+        document.getElementById('installer-list').innerHTML='<div class="empty-state"><div class="icon">🔎</div><div>No apps match</div></div>';
+        return;
+      }
+      let html='<div class="app-grid">';
+      filtered.forEach(s=>{
+        html+=`<div class="app-card">
+          <div class="app-top">
+            <div class="app-icon">${s.icon}</div>
+            <div class="app-head">
+              <div class="app-name">${escapeHtml(s.name)}</div>
+              <span class="app-cat">${escapeHtml(s.cat)}</span>
+            </div>
           </div>
-        </div>
-        <div class="app-desc">${escapeHtml(s.description)}</div>
-        <div class="app-actions">
-          <button class="btn btn-sm btn-success inst-install" data-soft="${escapeHtml(s.name)}">Install</button>
-          <button class="btn btn-sm btn-ghost inst-uninstall" data-soft="${escapeHtml(s.name)}">Uninstall</button>
-        </div>
-      </div>`;
-    });
-    html+='</div>';
-    document.getElementById('installer-list').innerHTML=html;
-    document.querySelectorAll('.inst-install').forEach(btn=>{
-      btn.addEventListener('click',function(){installSoftware(this.dataset.soft)});
-    });
-    document.querySelectorAll('.inst-uninstall').forEach(btn=>{
-      btn.addEventListener('click',function(){uninstallSoftware(this.dataset.soft)});
-    });
+          <div class="app-desc">${escapeHtml(s.description)}</div>
+          <div class="app-actions">
+            <button class="btn btn-sm btn-success inst-install" data-soft="${escapeHtml(s.name)}">Install</button>
+            <button class="btn btn-sm btn-ghost inst-uninstall" data-soft="${escapeHtml(s.name)}">Uninstall</button>
+          </div>
+        </div>`;
+      });
+      html+='</div>';
+      document.getElementById('installer-list').innerHTML=html;
+      document.querySelectorAll('.inst-install').forEach(btn=>{
+        btn.addEventListener('click',function(){installSoftware(this.dataset.soft)});
+      });
+      document.querySelectorAll('.inst-uninstall').forEach(btn=>{
+        btn.addEventListener('click',function(){uninstallSoftware(this.dataset.soft)});
+      });
+    };
+    document.getElementById('app-search').oninput=function(){appFilterQ=this.value;paint()};
+    document.getElementById('app-chips').onclick=e=>{
+      const btn=e.target.closest('.dk-chip');if(!btn)return;
+      appFilterCat=btn.dataset.cat||'all';paint();
+    };
+    paint();
   }catch(e){
     if(e.message!=='Unauthorized')document.getElementById('installer-list').innerHTML='<div class="error-msg">Error: '+e.message+'</div>';
   }

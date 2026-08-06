@@ -3,7 +3,10 @@ use std::error::Error;
 use std::fmt;
 
 use bollard::container::LogOutput;
-use bollard::models::{ContainerCreateBody, HostConfig, PortBinding, PortSummaryTypeEnum};
+use bollard::models::{
+    ContainerCreateBody, HostConfig, PortBinding, PortSummaryTypeEnum, RestartPolicy,
+    RestartPolicyNameEnum,
+};
 use bollard::query_parameters::{
     CreateContainerOptions, ListContainersOptions, LogsOptions, RemoveContainerOptions,
     RestartContainerOptions, StartContainerOptions, StatsOptions, StopContainerOptions,
@@ -100,6 +103,8 @@ pub async fn create(
     cmd: Option<Vec<String>>,
     ports: Vec<String>,
     env: Vec<String>,
+    restart_policy: Option<String>,
+    network_mode: Option<String>,
 ) -> Result<String, Box<dyn Error + Send + Sync>> {
     let client = docker()?;
 
@@ -131,11 +136,42 @@ pub async fn create(
         );
     }
 
-    let host_config = if port_bindings.is_empty() {
+    let restart = match restart_policy.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        Some("always") => Some(RestartPolicy {
+            name: Some(RestartPolicyNameEnum::ALWAYS),
+            maximum_retry_count: None,
+        }),
+        Some("unless-stopped") => Some(RestartPolicy {
+            name: Some(RestartPolicyNameEnum::UNLESS_STOPPED),
+            maximum_retry_count: None,
+        }),
+        Some("on-failure") => Some(RestartPolicy {
+            name: Some(RestartPolicyNameEnum::ON_FAILURE),
+            maximum_retry_count: Some(5),
+        }),
+        Some("no") => Some(RestartPolicy {
+            name: Some(RestartPolicyNameEnum::NO),
+            maximum_retry_count: None,
+        }),
+        _ => None,
+    };
+    let network = network_mode
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+
+    let host_config = if port_bindings.is_empty() && restart.is_none() && network.is_none() {
         None
     } else {
         Some(HostConfig {
-            port_bindings: Some(port_bindings),
+            port_bindings: if port_bindings.is_empty() {
+                None
+            } else {
+                Some(port_bindings)
+            },
+            restart_policy: restart,
+            network_mode: network,
             ..Default::default()
         })
     };
