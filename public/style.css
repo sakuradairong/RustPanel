@@ -174,8 +174,8 @@ td.clickable:hover{text-decoration:underline;color:var(--secondary)}
 .drawer-overlay.closing .drawer{transform:translateX(100%)}
 .drawer-head{display:flex;align-items:center;justify-content:space-between;gap:.75rem;padding:1rem 1.15rem;border-bottom:1px solid var(--border);flex-shrink:0}
 .drawer-title{font-weight:700;font-size:1rem;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.drawer-close{background:transparent;border:1px solid var(--border);color:var(--text-muted);width:32px;height:32px;border-radius:8px;font-size:1.2rem;line-height:1;cursor:pointer}
-.drawer-close:hover{background:var(--bg-elevated);color:var(--text)}
+.drawer-close{background:var(--bg-elevated);border:1px solid var(--border);color:var(--text);width:34px;height:34px;border-radius:8px;font-size:1.35rem;line-height:1;cursor:pointer;flex-shrink:0}
+.drawer-close:hover{background:var(--primary-glow);border-color:rgba(56,189,248,.45);color:var(--primary)}
 .drawer-body{padding:1.1rem 1.15rem;overflow-y:auto;flex:1;min-height:0}
 .drawer-section{margin-bottom:1.1rem}
 .drawer-section h4{font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--text-dim);margin-bottom:.45rem;font-weight:700}
