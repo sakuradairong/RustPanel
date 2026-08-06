@@ -48,10 +48,18 @@ struct DiskStats {
 }
 
 #[derive(Serialize)]
+struct LoadStats {
+    one: f64,
+    five: f64,
+    fifteen: f64,
+}
+
+#[derive(Serialize)]
 struct SystemStats {
     cpu: f32,
     memory: MemoryStats,
     swap: SwapStats,
+    load: LoadStats,
     network: Vec<NetworkStats>,
     disks: Vec<DiskStats>,
 }
@@ -92,6 +100,13 @@ fn collect_stats() -> SystemStats {
         total: sys.total_swap(),
     };
 
+    let la = System::load_average();
+    let load = LoadStats {
+        one: la.one,
+        five: la.five,
+        fifteen: la.fifteen,
+    };
+
     let network = Networks::new_with_refreshed_list()
         .into_iter()
         .map(|(name, data)| NetworkStats {
@@ -114,6 +129,7 @@ fn collect_stats() -> SystemStats {
         cpu,
         memory,
         swap,
+        load,
         network,
         disks,
     }
