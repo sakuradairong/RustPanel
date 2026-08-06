@@ -63,6 +63,18 @@ pub struct PullImageBody {
     pub image: String,
 }
 
+#[derive(Deserialize)]
+pub struct PruneImagesBody {
+    /// When true, only prune dangling images (default true).
+    pub dangling_only: Option<bool>,
+}
+
+#[derive(Deserialize)]
+pub struct ExecContainerBody {
+    /// Shell command string, e.g. `ls -la /`. Runs via `/bin/sh -c`.
+    pub cmd: String,
+}
+
 pub async fn list_images(_: AuthUser) -> HttpResponse {
     match image::list().await {
         Ok(images) => HttpResponse::Ok().json(ResponseStructure {
@@ -92,6 +104,19 @@ pub async fn remove_image(_: AuthUser, path: web::Path<ContainerIdPath>) -> Http
         Ok(_) => HttpResponse::Ok().json(ResponseStructure {
             success: true, code: 200, message: String::from("success"),
             data: None::<()>,
+        }),
+        Err(err) => HttpResponse::InternalServerError().json(ResponseStructureError {
+            success: false, code: 500, message: err.to_string(),
+        }),
+    }
+}
+
+pub async fn prune_images(_: AuthUser, body: web::Json<PruneImagesBody>) -> HttpResponse {
+    let dangling_only = body.dangling_only.unwrap_or(true);
+    match image::prune(dangling_only).await {
+        Ok(result) => HttpResponse::Ok().json(ResponseStructure {
+            success: true, code: 200, message: String::from("success"),
+            data: Some(result),
         }),
         Err(err) => HttpResponse::InternalServerError().json(ResponseStructureError {
             success: false, code: 500, message: err.to_string(),
@@ -230,6 +255,39 @@ pub async fn unpause_container(_: AuthUser, path: web::Path<ContainerIdPath>) ->
         }),
         Err(err) => HttpResponse::InternalServerError().json(ResponseStructureError {
             success: false, code: 500, message: err.to_string(),
+        }),
+    }
+}
+
+pub async fn exec_container(
+    _: AuthUser,
+    path: web::Path<ContainerIdPath>,
+    body: web::Json<ExecContainerBody>,
+) -> HttpResponse {
+    let cmd = body.cmd.trim();
+    if cmd.is_empty() {
+        return HttpResponse::BadRequest().json(ResponseStructureError {
+            success: false,
+            code: 400,
+            message: String::from("cmd is required"),
+        });
+    }
+    let argv = vec![
+        String::from("/bin/sh"),
+        String::from("-c"),
+        cmd.to_string(),
+    ];
+    match container::exec(&path.id, argv).await {
+        Ok(output) => HttpResponse::Ok().json(ResponseStructure {
+            success: true,
+            code: 200,
+            message: String::from("success"),
+            data: Some(serde_json::json!({"output": output})),
+        }),
+        Err(err) => HttpResponse::InternalServerError().json(ResponseStructureError {
+            success: false,
+            code: 500,
+            message: err.to_string(),
         }),
     }
 }

@@ -78,8 +78,9 @@ pub async fn list(all: bool) -> Result<Vec<ContainerInfo>, Box<dyn Error + Send 
             })
             .collect::<Vec<_>>();
 
+        // Normalize to lowercase so the UI can compare against "running"/"paused"/etc.
         let state_str = match c.state.as_ref() {
-            Some(s) => format!("{:?}", s),
+            Some(s) => format!("{:?}", s).to_lowercase(),
             None => String::new(),
         };
 
@@ -231,6 +232,61 @@ pub async fn unpause(container_id: &str) -> Result<(), Box<dyn Error + Send + Sy
     let client = docker()?;
     client.unpause_container(container_id).await?;
     Ok(())
+}
+
+/// Run a one-shot command inside a running container and return combined stdout/stderr.
+pub async fn exec(
+    container_id: &str,
+    cmd: Vec<String>,
+) -> Result<String, Box<dyn Error + Send + Sync>> {
+    use bollard::container::LogOutput;
+    use bollard::exec::{CreateExecOptions, StartExecOptions, StartExecResults};
+
+    if cmd.is_empty() {
+        return Err(Box::new(DockerContainerError {
+            message: "command is required".into(),
+        }));
+    }
+
+    let client = docker()?;
+    let created = client
+        .create_exec(
+            container_id,
+            CreateExecOptions {
+                attach_stdout: Some(true),
+                attach_stderr: Some(true),
+                cmd: Some(cmd),
+                ..Default::default()
+            },
+        )
+        .await?;
+
+    let results = client
+        .start_exec(&created.id, None::<StartExecOptions>)
+        .await?;
+
+    let mut output = String::new();
+    match results {
+        StartExecResults::Attached {
+            output: mut stream,
+            ..
+        } => {
+            while let Some(item) = stream.next().await {
+                match item {
+                    Ok(LogOutput::StdOut { message })
+                    | Ok(LogOutput::StdErr { message })
+                    | Ok(LogOutput::Console { message }) => {
+                        output.push_str(&String::from_utf8_lossy(&message));
+                    }
+                    Ok(LogOutput::StdIn { .. }) => {}
+                    Err(e) => return Err(Box::new(e)),
+                }
+            }
+        }
+        StartExecResults::Detached => {}
+    }
+
+    Ok(output)
 }
 
 pub async fn logs(

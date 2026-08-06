@@ -194,6 +194,7 @@ async function renderDockerContainers(dc){
           if(act==='logs'){renderDockerLogs(dc,id);return}
           if(act==='stats'){renderDockerStats(dc,id);return}
           if(act==='inspect'){openDockerDetailDrawer(dc,id,this.dataset.name||'');return}
+          if(act==='exec'){openDockerExecModal(id,this.dataset.name||'');return}
           if(act==='remove'){
             const nm=this.dataset.name||id.substring(0,12);
             confirmDialog({title:'Remove Container',messageHtml:'Remove container <strong>'+escapeHtml(nm)+'</strong>? This cannot be undone.',okText:'Remove',danger:true,loadingText:'Removing...',onConfirm:async()=>{
@@ -250,7 +251,7 @@ async function renderDockerContainers(dc){
         const sc=st.toLowerCase();
         const ports=Array.isArray(ct.ports)?ct.ports.join(', '):(ct.ports||'');
         const nm=(ct.name||'').replace(/^\//,'');
-        const run=st==='running';const paused=st==='paused';
+        const run=sc==='running';const paused=sc==='paused';
         const sel=dcSelected.has(ct.id);
         html+=`<div class="dk-card${sel?' selected':''}">
           <div class="dk-card-head">
@@ -265,9 +266,12 @@ async function renderDockerContainers(dc){
             <div class="dk-row"><span class="dk-k">Status</span><span class="dk-v" title="${escapeHtml(ct.status||'')}">${escapeHtml(ct.status||'—')}</span></div>
           </div>
           <div class="dk-actions">
-            <button class="btn btn-xs btn-success dc-act" data-id="${ct.id}" data-act="start" ${run?'disabled':''} title="Start">▶</button>
-            <button class="btn btn-xs btn-warning dc-act" data-id="${ct.id}" data-act="stop" ${!run||paused?'disabled':''} title="Stop">⏹</button>
+            <button class="btn btn-xs btn-success dc-act" data-id="${ct.id}" data-act="start" ${run||paused?'disabled':''} title="Start">▶</button>
+            <button class="btn btn-xs btn-warning dc-act" data-id="${ct.id}" data-act="stop" ${!run?'disabled':''} title="Stop">⏹</button>
             <button class="btn btn-xs btn-ghost dc-act" data-id="${ct.id}" data-act="restart" title="Restart">↻</button>
+            <button class="btn btn-xs btn-ghost dc-act" data-id="${ct.id}" data-act="pause" ${!run?'disabled':''} title="Pause">⏸</button>
+            <button class="btn btn-xs btn-ghost dc-act" data-id="${ct.id}" data-act="unpause" ${!paused?'disabled':''} title="Unpause">⏯</button>
+            <button class="btn btn-xs btn-ghost dc-act" data-id="${ct.id}" data-act="exec" data-name="${escapeHtml(nm)}" ${!run?'disabled':''} title="Exec">$</button>
             <button class="btn btn-xs btn-ghost dc-act" data-id="${ct.id}" data-act="logs" title="Logs">📋</button>
             <button class="btn btn-xs btn-ghost dc-act" data-id="${ct.id}" data-act="stats" title="Stats">📊</button>
             <button class="btn btn-xs btn-ghost dc-act" data-id="${ct.id}" data-act="inspect" data-name="${escapeHtml(nm)}" title="Details">🔍</button>
@@ -329,6 +333,7 @@ async function openDockerDetailDrawer(dc,id,nameHint){
     const restart=(hc.RestartPolicy&&hc.RestartPolicy.Name)||'—';
     const state=(st.Status||'').toLowerCase();
     const run=state==='running';
+    const paused=state==='paused'||!!st.Paused;
     d.body.innerHTML=`
       <div class="drawer-section">
         <div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.7rem">
@@ -356,9 +361,12 @@ async function openDockerDetailDrawer(dc,id,nameHint){
       <div class="drawer-section">
         <h4>Actions</h4>
         <div class="drawer-actions">
-          <button class="btn btn-sm btn-success" id="dr-start" ${run?'disabled':''}>Start</button>
+          <button class="btn btn-sm btn-success" id="dr-start" ${run||paused?'disabled':''}>Start</button>
           <button class="btn btn-sm btn-warning" id="dr-stop" ${!run?'disabled':''}>Stop</button>
           <button class="btn btn-sm btn-ghost" id="dr-restart">Restart</button>
+          <button class="btn btn-sm btn-ghost" id="dr-pause" ${!run?'disabled':''}>Pause</button>
+          <button class="btn btn-sm btn-ghost" id="dr-unpause" ${!paused?'disabled':''}>Unpause</button>
+          <button class="btn btn-sm btn-ghost" id="dr-exec" ${!run?'disabled':''}>Exec</button>
           <button class="btn btn-sm btn-ghost" id="dr-logs">Logs</button>
           <button class="btn btn-sm btn-ghost" id="dr-stats">Stats</button>
           <button class="btn btn-sm btn-ghost" id="dr-raw">Raw JSON</button>
@@ -377,6 +385,9 @@ async function openDockerDetailDrawer(dc,id,nameHint){
     d.body.querySelector('#dr-start').onclick=()=>act('start');
     d.body.querySelector('#dr-stop').onclick=()=>act('stop');
     d.body.querySelector('#dr-restart').onclick=()=>act('restart');
+    d.body.querySelector('#dr-pause').onclick=()=>act('pause');
+    d.body.querySelector('#dr-unpause').onclick=()=>act('unpause');
+    d.body.querySelector('#dr-exec').onclick=()=>{d.close();openDockerExecModal(id,nm)};
     d.body.querySelector('#dr-logs').onclick=()=>{d.close();renderDockerLogs(dc,id)};
     d.body.querySelector('#dr-stats').onclick=()=>{d.close();renderDockerStats(dc,id)};
     d.body.querySelector('#dr-raw').onclick=()=>{
@@ -500,6 +511,48 @@ async function renderDockerInspect(dc,id){
   openDockerDetailDrawer(dc,id,'');
 }
 
+function openDockerExecModal(id,nameHint){
+  const title=nameHint?('Exec · '+nameHint):'Exec Command';
+  const m=openModal(`
+    <h3>${escapeHtml(title)}</h3>
+    <div class="field"><label>Command</label>
+      <input type="text" id="dc-exec-cmd" placeholder="ls -la /" value="uname -a">
+    </div>
+    <div class="text-xs text-dim" style="margin:-4px 0 8px">Runs via <code>/bin/sh -c</code> inside the container.</div>
+    <pre id="dc-exec-out" class="drawer-pre" style="min-height:120px;max-height:280px">Output will appear here…</pre>
+    <div id="dc-exec-err" class="error-msg" style="display:none"></div>
+    <div class="btn-row">
+      <button class="btn btn-sm btn-ghost" id="dc-exec-close">Close</button>
+      <button class="btn btn-sm btn-success" id="dc-exec-run">Run</button>
+    </div>`,{maxWidth:'560px'});
+  m.root.querySelector('#dc-exec-close').onclick=m.close;
+  const run=async()=>{
+    const cmd=m.root.querySelector('#dc-exec-cmd').value.trim();
+    const out=m.root.querySelector('#dc-exec-out');
+    const err=m.root.querySelector('#dc-exec-err');
+    const btn=m.root.querySelector('#dc-exec-run');
+    if(!cmd){err.textContent='Command required';err.style.display='block';return}
+    err.style.display='none';btn.disabled=true;btn.textContent='Running…';out.textContent='…';
+    try{
+      const r=await api('/docker/containers/'+encodeURIComponent(id)+'/exec',{method:'POST',body:JSON.stringify({cmd})});
+      if(r.success){
+        out.textContent=(r.data&&r.data.output!=null)?String(r.data.output):'(no output)';
+        showToast('Exec finished','success');
+      } else {
+        err.textContent=r.message||'Exec failed';err.style.display='block';
+        out.textContent='';
+      }
+    }catch(e){
+      if(e.message==='Unauthorized'){m.close();return}
+      err.textContent='Error: '+e.message;err.style.display='block';
+    }finally{
+      btn.disabled=false;btn.textContent='Run';
+    }
+  };
+  m.root.querySelector('#dc-exec-run').onclick=run;
+  m.root.querySelector('#dc-exec-cmd').addEventListener('keydown',e=>{if(e.key==='Enter')run()});
+}
+
 function renderDockerCreate(dc){
   const m=openModal(`
     <h3>Create Container</h3>
@@ -568,6 +621,7 @@ async function renderDockerImages(dc){
         <span class="text-sm text-muted" id="di-count"></span>
       </div>
       <div class="dk-toolbar-right">
+        <button class="btn btn-sm btn-ghost" id="di-prune" title="Remove dangling images">Prune</button>
         <button class="btn btn-sm btn-success" id="di-pull">+ Pull</button>
       </div>
     </div>
@@ -620,6 +674,21 @@ async function renderDockerImages(dc){
     };
     document.getElementById('di-search').oninput=function(){diFilterQ=this.value;paint()};
     document.getElementById('di-pull').onclick=()=>renderDockerPull(dc);
+    document.getElementById('di-prune').onclick=()=>{
+      confirmDialog({
+        title:'Prune Images',
+        messageHtml:'Remove <strong>dangling</strong> (unused untagged) images? This cannot be undone.',
+        okText:'Prune',danger:true,loadingText:'Pruning...',
+        onConfirm:async()=>{
+          const r=await api('/docker/images/prune',{method:'POST',body:JSON.stringify({dangling_only:true})});
+          if(!r.success)throw new Error(r.message||'Prune failed');
+          const d=r.data||{};
+          const freed=d.space_reclaimed!=null?formatSize(d.space_reclaimed):'0 B';
+          showToast('Pruned '+(d.deleted||0)+' · freed '+freed,'success');
+          renderDockerImages(dc);
+        }
+      });
+    };
     paint();
   }catch(e){if(e.message!=='Unauthorized')dc.innerHTML='<div class="error-msg">Error: '+e.message+'</div>'}
 }
@@ -2175,24 +2244,27 @@ async function renderFirewall(){
     const rules = rulesJ.data||[];
     if(!Array.isArray(rules)){c.innerHTML='<div class="error-msg">Invalid firewall data</div>';return}
 
-    const active=statusData.active!=null?statusData.active:statusData.enabled;
+    const iptablesOk=!!statusData.iptables_available;
+    const ufwOk=!!statusData.ufw_available;
+    const ufwActive=statusData.ufw_active===true;
+    const active=ufwActive||iptablesOk;
 
     let html=`
     <div class="flex justify-between items-center mb-4">
       <h2 style="font-size:1.1rem;font-weight:600">Firewall</h2>
       <div class="flex items-center gap-3">
-        <span class="text-sm text-muted">Status:</span>
-        <span class="status-badge ${active?'running':'exited'}">${active?'Active':'Inactive'}</span>
+        <span class="text-sm text-muted">iptables: ${iptablesOk?'available':'missing'}${ufwOk?' · ufw '+(ufwActive?'active':'inactive'):''}</span>
+        <span class="status-badge ${active?'running':'exited'}">${active?'Ready':'Unavailable'}</span>
       </div>
     </div>`;
 
     html+=`<div class="card mb-4">
       <h3 style="font-size:0.95rem;margin-bottom:.75rem;color:var(--text-muted)">Rules</h3>
       <div class="table-wrap"><table>
-        <thead><tr><th>Chain</th><th>#</th><th>Target</th><th>Prot</th><th>Source</th><th>Destination</th></tr></thead>
+        <thead><tr><th>Chain</th><th>#</th><th>Target</th><th>Prot</th><th>Source</th><th>Destination</th><th></th></tr></thead>
         <tbody>`;
     if(rules.length===0){
-      html+=`<tr><td colspan="6" class="text-center text-muted">No rules</td></tr>`;
+      html+=`<tr><td colspan="7" class="text-center text-muted">No rules</td></tr>`;
     } else {
       rules.forEach(rule=>{
         const chain=rule.chain||rule.chaine||'';
@@ -2208,6 +2280,7 @@ async function renderFirewall(){
           <td>${escapeHtml(prot)}</td>
           <td style="font-family:monospace;font-size:0.8rem">${escapeHtml(source)}</td>
           <td style="font-family:monospace;font-size:0.8rem">${escapeHtml(dest)}</td>
+          <td><button class="btn btn-xs btn-danger fw-del-row" data-chain="${escapeHtml(chain)}" data-num="${num}">Delete</button></td>
         </tr>`;
       });
     }
@@ -2300,33 +2373,33 @@ async function renderFirewall(){
       }
     });
 
+    const deleteRule=async(chain,num,errEl,btn)=>{
+      if(errEl){errEl.style.display='none'}
+      if(btn){btn.disabled=true;const orig=btn.textContent;btn.textContent='…';btn.dataset.orig=orig}
+      try{
+        const r=await api('/firewall/rules/'+encodeURIComponent(chain)+'?num='+encodeURIComponent(num),{method:'DELETE'});
+        if(r.success){showToast('Rule deleted','success');renderFirewall();return}
+        if(errEl){errEl.textContent=r.message||'Failed to delete rule';errEl.style.display='block'}
+        else showToast(r.message||'Delete failed','error');
+      }catch(e){
+        if(e.message!=='Unauthorized'){
+          if(errEl){errEl.textContent='Error: '+e.message;errEl.style.display='block'}
+          else showToast('Error: '+e.message,'error');
+        }
+      }finally{
+        if(btn){btn.disabled=false;btn.textContent=btn.dataset.orig||'Delete Rule'}
+      }
+    };
+
     document.getElementById('fw-del-rule-btn').addEventListener('click',async()=>{
       const chain=document.getElementById('fw-del-chain').value;
       const num=document.getElementById('fw-del-num').value;
       const errEl=document.getElementById('fw-del-error');
       if(!num){errEl.textContent='Rule number is required';errEl.style.display='block';return}
-      errEl.style.display='none';
-      const btn=document.getElementById('fw-del-rule-btn');
-      btn.disabled=true;btn.textContent='Deleting...';
-      try{
-        const r=await api('/firewall/rules/'+encodeURIComponent(chain)+'/'+num,{
-          method:'DELETE'
-        });
-        if(r.success){
-          showToast('Rule deleted','success');
-          renderFirewall();
-        } else {
-          errEl.textContent=r.message||'Failed to delete rule';
-          errEl.style.display='block';
-          btn.disabled=false;btn.textContent='Delete Rule';
-        }
-      }catch(e){
-        if(e.message!=='Unauthorized'){
-          errEl.textContent='Error: '+e.message;
-          errEl.style.display='block';
-          btn.disabled=false;btn.textContent='Delete Rule';
-        }
-      }
+      await deleteRule(chain,num,errEl,document.getElementById('fw-del-rule-btn'));
+    });
+    c.querySelectorAll('.fw-del-row').forEach(btn=>{
+      btn.onclick=()=>deleteRule(btn.dataset.chain,btn.dataset.num,null,btn);
     });
 
     document.getElementById('fw-open-port-btn').addEventListener('click',async()=>{
@@ -2338,15 +2411,20 @@ async function renderFirewall(){
       const btn=document.getElementById('fw-open-port-btn');
       btn.disabled=true;btn.textContent='Opening...';
       try{
-        const r=await api('/firewall/port',{
-          method:'POST',
-          body:JSON.stringify({port:parseInt(port),protocol:prot})
-        });
-        if(r.success){
+        const protos=prot==='both'?['tcp','udp']:[prot];
+        let last=null;
+        for(const p of protos){
+          last=await api('/firewall/port',{
+            method:'POST',
+            body:JSON.stringify({port:parseInt(port),protocol:p})
+          });
+          if(!last.success)break;
+        }
+        if(last&&last.success){
           showToast('Port opened','success');
           renderFirewall();
         } else {
-          errEl.textContent=r.message||'Failed to open port';
+          errEl.textContent=(last&&last.message)||'Failed to open port';
           errEl.style.display='block';
           btn.disabled=false;btn.textContent='Open Port';
         }
