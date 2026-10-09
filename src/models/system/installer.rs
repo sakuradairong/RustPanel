@@ -1,6 +1,6 @@
 /*
  * @Descripttion: Native Rust Installer for System Software
- * @version: 
+ * @version:
  * @Author: Wynters
  * @Date: 2025-12-15 12:35:29
  * @LastEditTime: 2025-12-15 13:28:48
@@ -11,16 +11,15 @@ use std::error::Error;
 use std::fmt;
 
 use crate::models::system::installers::{
-    nginx::NginxInstaller,
-    mysql::MysqlInstaller,
-    pgsql::PgsqlInstaller,
-    redis::RedisInstaller,
-    docker::DockerInstaller,
+    apache::ApacheInstaller, caddy::CaddyInstaller, docker::DockerInstaller, mysql::MysqlInstaller,
+    nginx::NginxInstaller, pgsql::PgsqlInstaller, redis::RedisInstaller,
 };
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub enum SoftwareType {
     Nginx,
+    Apache,
+    Caddy,
     Mysql,
     Pgsql,
     Redis,
@@ -31,6 +30,8 @@ impl fmt::Display for SoftwareType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             SoftwareType::Nginx => write!(f, "nginx"),
+            SoftwareType::Apache => write!(f, "apache"),
+            SoftwareType::Caddy => write!(f, "caddy"),
             SoftwareType::Mysql => write!(f, "mysql"),
             SoftwareType::Pgsql => write!(f, "pgsql"),
             SoftwareType::Redis => write!(f, "redis"),
@@ -39,9 +40,14 @@ impl fmt::Display for SoftwareType {
     }
 }
 
-pub async fn install(software: SoftwareType, version: &str) -> Result<(), Box<dyn Error + Send + Sync>> {
+pub async fn install(
+    software: SoftwareType,
+    version: &str,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
     match software {
         SoftwareType::Nginx => NginxInstaller::install(version).await,
+        SoftwareType::Apache => ApacheInstaller::install(version).await,
+        SoftwareType::Caddy => CaddyInstaller::install(version).await,
         SoftwareType::Mysql => MysqlInstaller::install(version).await,
         SoftwareType::Pgsql => PgsqlInstaller::install(version).await,
         SoftwareType::Redis => RedisInstaller::install(version).await,
@@ -49,7 +55,10 @@ pub async fn install(software: SoftwareType, version: &str) -> Result<(), Box<dy
     }
 }
 
-pub async fn switch_version(software: SoftwareType, version: &str) -> Result<(), Box<dyn Error + Send + Sync>> {
+pub async fn switch_version(
+    software: SoftwareType,
+    version: &str,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
     // For now, switch version is essentially a reinstall or specific upgrade logic.
     // We delegate to install for simplicity, assuming the installer handles overwrites/upgrades.
     install(software, version).await
@@ -58,6 +67,8 @@ pub async fn switch_version(software: SoftwareType, version: &str) -> Result<(),
 pub async fn uninstall(software: SoftwareType) -> Result<(), Box<dyn Error + Send + Sync>> {
     match software {
         SoftwareType::Nginx => NginxInstaller::uninstall().await,
+        SoftwareType::Apache => ApacheInstaller::uninstall().await,
+        SoftwareType::Caddy => CaddyInstaller::uninstall().await,
         SoftwareType::Mysql => MysqlInstaller::uninstall().await,
         SoftwareType::Pgsql => PgsqlInstaller::uninstall().await,
         SoftwareType::Redis => RedisInstaller::uninstall().await,

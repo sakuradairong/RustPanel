@@ -1147,6 +1147,16 @@ function updateMonitor(data){
 
 // ── Web Server ──
 let webServerTab='status';
+let webServerKind='nginx';
+
+function webServerBase(){
+  return webServerKind==='nginx'?'/webserver':'/webserver/'+webServerKind;
+}
+function webServerLabel(){
+  if(webServerKind==='apache')return 'Apache';
+  if(webServerKind==='caddy')return 'Caddy';
+  return 'Nginx';
+}
 
 async function renderWebServer(){
   const c=document.getElementById('content');
@@ -1155,6 +1165,11 @@ async function renderWebServer(){
   c.innerHTML=`
   <div class="flex justify-between items-center mb-4">
     <h2 style="font-size:1.1rem;font-weight:600">Web Server</h2>
+    <select id="ws-kind" style="min-width:140px">
+      <option value="nginx">Nginx</option>
+      <option value="apache">Apache</option>
+      <option value="caddy">Caddy</option>
+    </select>
   </div>
   <div class="card mb-4" id="webserver-status-card">
     <div style="text-align:center;padding:1rem;color:var(--text-dim)">Loading status...</div>
@@ -1169,6 +1184,14 @@ async function renderWebServer(){
     <div style="text-align:center;padding:2rem;color:var(--text-dim)">Select a tab</div>
   </div>`;
 
+  const kindSel=document.getElementById('ws-kind');
+  if(kindSel){
+    kindSel.value=webServerKind;
+    kindSel.addEventListener('change',function(){
+      webServerKind=this.value;
+      renderWebServer();
+    });
+  }
   c.querySelectorAll('.tab').forEach(tab=>{
     tab.addEventListener('click',function(){
       webServerTab=this.dataset.tab;
@@ -1186,7 +1209,7 @@ async function loadWebServerStatus(){
   const card=document.getElementById('webserver-status-card');
   if(!card)return;
   try{
-    const j=await api('/webserver/status');
+    const j=await api(webServerBase()+'/status');
     if(!j.success){card.innerHTML='<div class="error-msg">Failed to load status</div>';return}
     const d=j.data||{};
     const installed=d.installed?'Yes':'No';
@@ -1216,7 +1239,7 @@ async function renderWebServerTab(tab){
 async function renderWebServerSites(tc){
   tc.innerHTML='<div style="text-align:center;padding:2rem;color:var(--text-dim)">Loading sites...</div>';
   try{
-    const j=await api('/webserver/sites');
+    const j=await api(webServerBase()+'/sites');
     if(!j.success){tc.innerHTML='<div class="error-msg">Failed to load sites</div>';return}
     const sites=j.data||[];
     if(!Array.isArray(sites)){tc.innerHTML='<div class="error-msg">Invalid site data</div>';return}
@@ -1250,7 +1273,7 @@ async function renderWebServerSites(tc){
         this.disabled=true;
         this.textContent='...';
         try{
-          const r=await api('/webserver/sites/'+encodeURIComponent(name)+'/'+action,{method:'POST'});
+          const r=await api(webServerBase()+'/sites/'+encodeURIComponent(name)+'/'+action,{method:'POST'});
           if(r.success){showToast('Site '+(enable?'enabled':'disabled'),'success');renderWebServerSites(tc)}
           else showToast(r.message||'Toggle failed','error');
         }catch(e){if(e.message!=='Unauthorized')showToast('Error: '+e.message,'error')}
@@ -1278,7 +1301,7 @@ async function renderWebServerSites(tc){
           const confirmBtn=document.getElementById('modal-confirm-btn');
           confirmBtn.disabled=true;confirmBtn.textContent='Deleting...';
           try{
-            const r=await api('/webserver/sites/'+encodeURIComponent(name),{method:'DELETE'});
+            const r=await api(webServerBase()+'/sites/'+encodeURIComponent(name),{method:'DELETE'});
             if(r.success){showToast('Site deleted','success');closeOverlay();renderWebServerSites(tc)}
             else showToast(r.message||'Delete failed','error');
           }catch(e){if(e.message!=='Unauthorized')showToast('Error: '+e.message,'error')}
@@ -1324,7 +1347,7 @@ function renderWebServerCreate(tc){
     </div>
     <div class="field">
       <label>Custom Config (optional)</label>
-      <textarea id="ws-custom-config" rows="6" class="config-area" placeholder="# Additional nginx directives"></textarea>
+      <textarea id="ws-custom-config" rows="6" class="config-area" placeholder="${webServerKind==='apache'?'# Additional Apache directives':webServerKind==='caddy'?'# Additional Caddy directives':'# Additional nginx directives'}"></textarea>
     </div>
     <div id="ws-create-error" class="error-msg" style="display:none"></div>
     <button class="btn btn-success mt-3" id="ws-create-btn">Create Site</button>
@@ -1347,7 +1370,7 @@ function renderWebServerCreate(tc){
     btn.disabled=true;btn.textContent='Creating...';
     try{
       const body={server_name:name,root,proxy_pass:proxyPass,ssl,index,extra_config:customConfig};
-      const r=await api('/webserver/sites',{method:'POST',body:JSON.stringify(body)});
+      const r=await api(webServerBase()+'/sites',{method:'POST',body:JSON.stringify(body)});
       if(r.success){
         showToast('Site created','success');
         webServerTab='status';
@@ -1370,8 +1393,8 @@ function renderWebServerCreate(tc){
 function renderWebServerConfig(tc){
   tc.innerHTML=`
   <div class="card">
-    <p style="color:var(--text-muted);margin-bottom:1rem;font-size:0.9rem">Manage Nginx configuration</p>
-    <button class="btn btn-warning" id="ws-reload-btn">Reload Nginx</button>
+    <p style="color:var(--text-muted);margin-bottom:1rem;font-size:0.9rem">Manage ${webServerLabel()} configuration</p>
+    <button class="btn btn-warning" id="ws-reload-btn">Reload ${webServerLabel()}</button>
     <div id="ws-reload-result" class="mt-3" style="display:none"></div>
   </div>`;
 
@@ -1381,10 +1404,10 @@ function renderWebServerConfig(tc){
     const resultEl=document.getElementById('ws-reload-result');
     resultEl.style.display='none';
     try{
-      const r=await api('/webserver/reload',{method:'POST'});
+      const r=await api(webServerBase()+'/reload',{method:'POST'});
       resultEl.style.display='block';
       if(r.success){
-        resultEl.innerHTML='<span style="color:var(--success)">✓ Nginx reloaded successfully</span>';
+        resultEl.innerHTML='<span style="color:var(--success)">✓ '+webServerLabel()+' reloaded successfully</span>';
         loadWebServerStatus();
       } else {
         resultEl.innerHTML='<span style="color:var(--error)">✗ '+(r.message||'Reload failed')+'</span>';
@@ -1395,7 +1418,7 @@ function renderWebServerConfig(tc){
         resultEl.innerHTML='<span style="color:var(--error)">✗ Error: '+e.message+'</span>';
       }
     }finally{
-      btn.disabled=false;btn.textContent='Reload Nginx';
+      btn.disabled=false;btn.textContent='Reload '+webServerLabel();
     }
   });
 }

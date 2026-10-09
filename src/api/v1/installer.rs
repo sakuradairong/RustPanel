@@ -20,6 +20,16 @@ pub async fn list_software(_: AuthUser) -> HttpResponse {
             versions_available: true,
         },
         SoftwareInfo {
+            name: String::from("apache"),
+            description: String::from("Apache HTTP server from the system package manager"),
+            versions_available: false,
+        },
+        SoftwareInfo {
+            name: String::from("caddy"),
+            description: String::from("Caddy web server with automatic HTTPS"),
+            versions_available: true,
+        },
+        SoftwareInfo {
             name: String::from("mysql"),
             description: String::from("MySQL relational database management system"),
             versions_available: true,
@@ -58,6 +68,8 @@ pub struct InstallBody {
 pub async fn install_software(_: AuthUser, body: web::Json<InstallBody>) -> HttpResponse {
     let software_type = match body.software.to_lowercase().as_str() {
         "nginx" => SoftwareType::Nginx,
+        "apache" => SoftwareType::Apache,
+        "caddy" => SoftwareType::Caddy,
         "mysql" => SoftwareType::Mysql,
         "pgsql" => SoftwareType::Pgsql,
         "redis" => SoftwareType::Redis,
@@ -109,6 +121,8 @@ pub struct UninstallBody {
 pub async fn uninstall_software(_: AuthUser, body: web::Json<UninstallBody>) -> HttpResponse {
     let software_type = match body.software.to_lowercase().as_str() {
         "nginx" => SoftwareType::Nginx,
+        "apache" => SoftwareType::Apache,
+        "caddy" => SoftwareType::Caddy,
         "mysql" => SoftwareType::Mysql,
         "pgsql" => SoftwareType::Pgsql,
         "redis" => SoftwareType::Redis,
