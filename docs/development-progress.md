@@ -162,9 +162,22 @@ RP-01~RP-13 十一个 PR（#4~#14）按堆叠链逐个评审后合入 `dev`。�
 
 剩余：#20（secrets 接入业务面）——涉及部署时私钥物化等语义决策，实施计划见 issue #20 评论。
 
+## 第十五批：PR #2 打捞（#28/#29/#30）
+
+8 月的前端大分支（29 commit，标题仅覆盖首个）按拆解方案分三个 PR 落地，原 PR #2 关闭：
+
+| 部分 | 内容 | PR |
+| --- | --- | --- |
+| A 后端小件 | SSE \`Content-Encoding: identity\`（修复 Compress 中间件缓冲事件流）、负载 1/5/15 统计、进程 PID 搜索 | #28 |
+| B Docker 功能面 | create 扩展（端口/env/重启策略白名单/网络模式）、images/volumes prune、one-shot exec（\`docker:write\`） | #29 |
+| C 前端主体 | ui.js 共享原语、仪表盘环形仪表、监控时序图、Docker 卡片网格+详情抽屉、应用商店版本选择、文件管理器、系统信息页、登录打磨；SSE 全部改票据流+断线重新取票；保留 Apache/Caddy 站点段 | #30 |
+
+未打捞：WebSocket 交互终端（原实现纯 \`decode_jwt\` + JWT-in-query，不可救药）→ issue #31 按 RP-35 票据化方案重做；分支 AGENTS.md 重写丢弃。
+
 ## 接下来
 
 1. #20 secrets 接入业务面（ACME/TLS 私钥改走 secrets 表，计划见 issue #20）。
+2. #31 容器 WebSocket 终端票据化（RP-35 起步）。
 2. RP-07 后续：socket runner / 降权部署。
 3. RP-23 增强：refresh 轮换与会话过期清理任务。
 4. RP-11 后续：SBOM、签名、依赖重复版本收紧；rust-crypto/reqwest 升级后撤销 deny ignore。
