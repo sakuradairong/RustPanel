@@ -141,6 +141,8 @@ th{color:var(--text-dim);font-weight:700;font-size:.72rem;text-transform:upperca
 tr:last-child td{border-bottom:none}
 tr:hover td{background:rgba(56,189,248,.03)}
 tr:nth-child(even) td{background:rgba(255,255,255,.005)}
+th.sortable{cursor:pointer;user-select:none}
+th.sortable:hover{color:var(--text)}
 td.clickable{cursor:pointer;color:var(--primary);font-weight:500}
 td.clickable:hover{text-decoration:underline;color:var(--secondary)}
 
@@ -162,6 +164,35 @@ td.clickable:hover{text-decoration:underline;color:var(--secondary)}
 .modal h3{font-size:1.15rem;margin-bottom:1.2rem;color:var(--text);font-weight:700}
 .modal .field{margin-bottom:.85rem}.modal .field label{display:block;font-size:.82rem;color:var(--text-muted);margin-bottom:4px;font-weight:600}
 .modal .btn-row{display:flex;gap:.6rem;justify-content:flex-end;margin-top:1.2rem}.modal .btn-row button{min-width:90px}
+
+/* ── Drawer (1Panel-style detail panel) ── */
+.drawer-overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:210;display:flex;justify-content:flex-end;backdrop-filter:blur(3px);opacity:0;transition:opacity .18s ease}
+.drawer-overlay.open{opacity:1}
+.drawer-overlay.closing{opacity:0}
+.drawer{height:100%;background:var(--card);border-left:1px solid var(--border);box-shadow:var(--shadow-lg);display:flex;flex-direction:column;transform:translateX(100%);transition:transform .2s ease;max-width:100%}
+.drawer-overlay.open .drawer{transform:translateX(0)}
+.drawer-overlay.closing .drawer{transform:translateX(100%)}
+.drawer-head{display:flex;align-items:center;justify-content:space-between;gap:.75rem;padding:1rem 1.15rem;border-bottom:1px solid var(--border);flex-shrink:0}
+.drawer-title{font-weight:700;font-size:1rem;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.drawer-close{background:var(--bg-elevated);border:1px solid var(--border);color:var(--text);width:34px;height:34px;border-radius:8px;font-size:1.35rem;line-height:1;cursor:pointer;flex-shrink:0}
+.drawer-close:hover{background:var(--primary-glow);border-color:rgba(56,189,248,.45);color:var(--primary)}
+.drawer-body{padding:1.1rem 1.15rem;overflow-y:auto;flex:1;min-height:0}
+.drawer-section{margin-bottom:1.1rem}
+.drawer-section h4{font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--text-dim);margin-bottom:.45rem;font-weight:700}
+.drawer-kv{display:grid;grid-template-columns:90px 1fr;gap:6px 10px;font-size:.84rem}
+.drawer-kv .k{color:var(--text-dim)}
+.drawer-kv .v{color:var(--text);word-break:break-word;font-family:var(--mono);font-size:.8rem}
+.drawer-actions{display:flex;flex-wrap:wrap;gap:.4rem;margin-top:.3rem}
+.term-screen{font-family:var(--mono);white-space:pre-wrap;word-break:break-all;line-height:1.45}
+
+/* ── Batch action bar ── */
+.dk-batch{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;margin:0 0 .85rem;padding:.55rem .75rem;background:var(--bg-elevated);border:1px dashed var(--border);border-radius:10px;min-height:40px;opacity:.55;pointer-events:none}
+.dk-batch.show{background:var(--primary-glow);border:1px solid rgba(56,189,248,.35);opacity:1;pointer-events:auto}
+.dk-batch .dk-batch-label{font-size:.82rem;font-weight:600;color:var(--primary);margin-right:.25rem}
+.dk-card.selected{border-color:rgba(56,189,248,.55);box-shadow:0 0 0 1px rgba(56,189,248,.25)}
+.dk-check{appearance:auto;width:16px;height:16px;margin:0;cursor:pointer;accent-color:var(--primary);flex-shrink:0}
+.dk-card-head .dk-name{cursor:pointer}
+.dk-card-head .dk-name:hover{color:var(--primary)}
 
 /* ── Log Viewer ── */
 .log-layout{display:flex;gap:1rem;min-height:500px}
@@ -231,6 +262,92 @@ td.clickable:hover{text-decoration:underline;color:var(--secondary)}
 ::-webkit-scrollbar-track{background:transparent}
 ::-webkit-scrollbar-thumb{background:var(--border);border-radius:5px}
 ::-webkit-scrollbar-thumb:hover{background:var(--border-accent)}
+
+/* ── Dashboard overview + ring gauges (1Panel-style) ── */
+.ds-overview{display:flex;flex-wrap:wrap;gap:1.75rem;align-items:center}
+.ds-overview .ov-item{display:flex;flex-direction:column;gap:3px;min-width:88px}
+.ds-overview .ov-k{font-size:.66rem;text-transform:uppercase;letter-spacing:.07em;color:var(--text-dim);font-weight:700}
+.ds-overview .ov-v{font-size:.92rem;color:var(--text);font-weight:600;font-variant-numeric:tabular-nums}
+.ds-h{font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;font-weight:700;color:var(--text-dim);margin-bottom:.8rem}
+.gauge-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:1rem}
+@media(max-width:900px){.gauge-grid{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:480px){.gauge-grid{grid-template-columns:1fr}}
+.gauge{display:flex;flex-direction:column;align-items:center;text-align:center}
+.gauge-title{font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;font-weight:700;color:var(--text-dim);margin-bottom:.7rem}
+.gauge-ring{position:relative;width:132px;height:132px}
+.gauge-ring svg{width:100%;height:100%;transform:rotate(-90deg)}
+.gauge-track{fill:none;stroke:var(--bg-elevated);stroke-width:10}
+.gauge-arc{fill:none;stroke:var(--primary);stroke-width:10;stroke-linecap:round;transition:stroke-dashoffset .6s cubic-bezier(.4,0,.2,1),stroke .3s}
+.gauge-center{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:1.5rem;font-weight:800;color:var(--text);font-variant-numeric:tabular-nums}
+.gauge-sub{margin-top:.6rem;font-size:.76rem;color:var(--text-muted);font-variant-numeric:tabular-nums;min-height:1em}
+/* ── App Store cards (1Panel-style) ── */
+.app-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:1rem}
+.app-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:1.1rem;display:flex;flex-direction:column;gap:.7rem;box-shadow:var(--shadow-sm);transition:border-color var(--transition),transform var(--transition),box-shadow var(--transition)}
+.app-card:hover{border-color:var(--border-accent);transform:translateY(-2px);box-shadow:var(--shadow)}
+.app-top{display:flex;align-items:center;gap:.8rem}
+.app-icon{width:46px;height:46px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:1.55rem;background:var(--bg-elevated);border:1px solid var(--border);border-radius:12px}
+.app-head{display:flex;flex-direction:column;gap:4px;min-width:0}
+.app-name{font-weight:700;font-size:1rem;color:var(--text);text-transform:capitalize}
+.app-cat{align-self:flex-start;font-size:.64rem;text-transform:uppercase;letter-spacing:.05em;font-weight:700;color:var(--primary);background:var(--primary-glow);border:1px solid rgba(56,189,248,.25);padding:1px 8px;border-radius:10px}
+.app-desc{font-size:.83rem;color:var(--text-muted);line-height:1.5;flex:1}
+.app-actions{display:flex;gap:.5rem;margin-top:.1rem}
+.app-actions .btn{flex:1}
+
+/* ── File editor toolbar ── */
+.content-toolbar{display:flex;align-items:center;gap:.5rem;margin-bottom:.6rem;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:.5rem .75rem}
+.log-toolbar{display:flex;align-items:center;gap:.5rem;margin-bottom:.6rem}
+
+/* ── File manager breadcrumb (1Panel-style) ── */
+.file-breadcrumb{display:flex;flex-wrap:wrap;align-items:center;gap:2px;margin-bottom:.75rem;font-size:.85rem;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:.5rem .75rem}
+.file-breadcrumb .crumb{color:var(--primary);cursor:pointer;padding:1px 6px;border-radius:5px;white-space:nowrap}
+.file-breadcrumb .crumb:hover{background:var(--bg-elevated);text-decoration:underline}
+.file-breadcrumb .crumb-sep{color:var(--text-dim)}
+
+/* ── System Info cards (1Panel-style) ── */
+.info-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:.85rem}
+.info-item{padding:.9rem 1.1rem}
+.info-item .info-k{font-size:.66rem;text-transform:uppercase;letter-spacing:.06em;color:var(--text-dim);font-weight:700;margin-bottom:5px}
+.info-item .info-v{font-size:.95rem;color:var(--text);font-weight:600;font-variant-numeric:tabular-nums;word-break:break-word}
+
+/* ── Docker container cards (1Panel-style) ── */
+.dk-toolbar{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:.75rem;margin-bottom:1rem}
+.dk-toolbar-left{display:flex;flex-wrap:wrap;align-items:center;gap:.6rem;min-width:0;flex:1}
+.dk-toolbar-right{display:flex;align-items:center;gap:.45rem;flex-shrink:0}
+.dk-search{max-width:260px;width:100%;padding:7px 12px;border:1px solid var(--border);border-radius:8px;background:var(--card);color:var(--text);font-size:.85rem}
+.dk-search:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-glow)}
+.dk-chips{display:flex;flex-wrap:wrap;gap:.35rem}
+.dk-chip{border:1px solid var(--border);background:var(--card);color:var(--text-muted);border-radius:999px;padding:4px 10px;font-size:.75rem;font-weight:600;cursor:pointer;transition:all var(--transition)}
+.dk-chip span{margin-left:4px;opacity:.75;font-variant-numeric:tabular-nums}
+.dk-chip:hover{border-color:var(--border-accent);color:var(--text)}
+.dk-chip.active{background:var(--primary-glow);border-color:rgba(56,189,248,.45);color:var(--primary)}
+.dk-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:1rem}
+.dk-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:1rem 1.1rem;display:flex;flex-direction:column;gap:.7rem;box-shadow:var(--shadow-sm);transition:border-color var(--transition),box-shadow var(--transition)}
+.dk-card:hover{border-color:var(--border-accent);box-shadow:var(--shadow)}
+.dk-card-head{display:flex;align-items:center;gap:.5rem}
+.dk-card-head .status-badge{margin-left:auto;flex-shrink:0}
+.dk-name{font-weight:700;font-size:.98rem;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1}
+.dk-meta{display:flex;flex-direction:column;gap:5px}
+.dk-row{display:flex;gap:.6rem;font-size:.8rem;align-items:baseline}
+.dk-k{color:var(--text-dim);width:52px;flex-shrink:0;text-transform:uppercase;font-size:.64rem;letter-spacing:.04em;font-weight:700;padding-top:1px}
+.dk-v{color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.dk-v.mono{font-family:var(--mono)}
+.dk-actions{display:flex;flex-wrap:wrap;gap:.35rem;border-top:1px solid var(--border);padding-top:.7rem}
+
+.live-chart{width:100%;height:120px}
+.live-chart svg{width:100%;height:100%;display:block;overflow:visible}
+.lc-grid{stroke:var(--border);stroke-width:1;opacity:.45}
+
+/* ── A11y & polish (refactor) ── */
+:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
+button:focus-visible,.nav-item:focus-visible,.tab:focus-visible{outline-offset:1px}
+#topbar .user-info .avatar{cursor:default;text-transform:uppercase;flex-shrink:0}
+.pw-field{position:relative;display:flex;align-items:center}
+.pw-field input{padding-right:44px}
+.pw-toggle{position:absolute;right:6px;top:50%;transform:translateY(-50%);background:transparent;border:none;color:var(--text-dim);font-size:1rem;line-height:1;padding:4px 8px;border-radius:6px;width:auto}
+.pw-toggle:hover{color:var(--text);background:var(--bg-elevated)}
+@media(prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important;scroll-behavior:auto!important}
+}
 
 /* ── Mobile ── */
 @media(max-width:768px){
