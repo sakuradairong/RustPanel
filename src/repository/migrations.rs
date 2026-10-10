@@ -12,7 +12,7 @@ use std::path::Path;
 use crate::service::db::DBPool;
 
 /// Product binary expects this schema version after a successful migrate.
-pub const EXPECTED_SCHEMA_VERSION: i64 = 1;
+pub const EXPECTED_SCHEMA_VERSION: i64 = 2;
 
 /// Bookkeeping table for applied migrations. Created outside numbered SQL so the
 /// runner can always inspect history even on a blank database.
@@ -56,11 +56,18 @@ struct Migration {
     sql: &'static str,
 }
 
-const MIGRATIONS: &[Migration] = &[Migration {
-    version: 1,
-    name: "001_initial",
-    sql: include_str!("sql/001_initial.sql"),
-}];
+const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        name: "001_initial",
+        sql: include_str!("sql/001_initial.sql"),
+    },
+    Migration {
+        version: 2,
+        name: "002_argon2_password",
+        sql: include_str!("sql/002_argon2_password.sql"),
+    },
+];
 
 #[derive(QueryableByName)]
 struct VersionRow {
@@ -289,13 +296,19 @@ pub fn verify_database_file(path: &Path) -> Result<i64, MigrationError> {
             "Verified database is missing schema_migrations",
         ));
     }
+    let expected_migration = MIGRATIONS
+        .iter()
+        .find(|migration| migration.version == EXPECTED_SCHEMA_VERSION)
+        .ok_or_else(|| {
+            MigrationError::new("Binary is missing the expected schema migration definition")
+        })?;
     let rows: Vec<ChecksumRow> = sql_query(
         "SELECT checksum FROM schema_migrations WHERE version = ?1 LIMIT 1",
     )
     .bind::<BigInt, _>(EXPECTED_SCHEMA_VERSION)
     .load(&mut conn)
     .map_err(|err| MigrationError::new(format!("Failed to read migration checksum: {err}")))?;
-    let expected = checksum(MIGRATIONS[0].sql);
+    let expected = checksum(expected_migration.sql);
     let recorded = rows
         .first()
         .ok_or_else(|| MigrationError::new("Verified database missing expected schema version"))?;
@@ -361,6 +374,19 @@ mod tests {
         .load(&mut *pool.get().unwrap())
         .unwrap();
         assert_eq!(rows[0].count, 1);
+        // RP-01 clears historical plaintext and flags a mandatory password change.
+        let flagged: Vec<CountRow> = sql_query(
+            "SELECT COUNT(*) AS count FROM rp_users WHERE must_change_password = 1",
+        )
+        .load(&mut *pool.get().unwrap())
+        .unwrap();
+        assert_eq!(flagged[0].count, 1);
+        let has_column: Vec<CountRow> = sql_query(
+            "SELECT COUNT(*) AS count FROM pragma_table_info('rp_users') WHERE name = 'initial_password'",
+        )
+        .load(&mut *pool.get().unwrap())
+        .unwrap();
+        assert_eq!(has_column[0].count, 0);
     }
 
     #[test]

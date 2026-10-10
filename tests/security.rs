@@ -43,12 +43,13 @@ fn database(with_schema: bool) -> (NamedTempFile, DBPool) {
             .batch_execute(
                 "CREATE TABLE rp_users (
             id INTEGER PRIMARY KEY, username TEXT NOT NULL, password TEXT NOT NULL,
-            salt TEXT NOT NULL, initial_password TEXT NOT NULL, authority TEXT NOT NULL,
+            salt TEXT NOT NULL, authority TEXT NOT NULL,
             error_count INTEGER NOT NULL, status INTEGER NOT NULL,
-            created_at TIMESTAMP NOT NULL, updated_at TIMESTAMP NOT NULL
+            created_at TIMESTAMP NOT NULL, updated_at TIMESTAMP NOT NULL,
+            password_algo TEXT NOT NULL, must_change_password INTEGER NOT NULL
         ); INSERT INTO rp_users VALUES (
-            1, 'operator', 'test-password-hash', 'test-salt', '', 'user', 0, 0,
-            '2026-10-10 00:00:00', '2026-10-10 00:00:00'
+            1, 'operator', 'test-password-hash', 'test-salt', 'user', 0, 0,
+            '2026-10-10 00:00:00', '2026-10-10 00:00:00', 'sha1', 0
         );",
             )
             .unwrap();

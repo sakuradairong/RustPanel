@@ -7,12 +7,12 @@
  * @FilePath: \RustPanel\src\api\auth.rs
  */
 use crate::{
-    common::fun::sha1_salt,
     errors::common::CommonError,
     models::{structure::rp_users::SlimUser, user::find_user_by_id},
     service::{
         db::DBPool,
         global::{CONF, USER_PASSWORD_KEY},
+        password::{self, PasswordError},
     },
 };
 use actix_web::{dev::Payload, web, Error, FromRequest, HttpRequest};
@@ -85,25 +85,25 @@ pub enum AuthError {
     VerificationError,
 }
 
-// impl From<argon2::Error> for AuthError {
-//     fn from(_: argon2::Error) -> Self {
-//         AuthError::HashError
-//     }
-// }
+impl From<PasswordError> for AuthError {
+    fn from(_: PasswordError) -> Self {
+        AuthError::VerificationError
+    }
+}
 
-// pub fn generate_password(password: String) -> String {
-//     sha1_salt(password, String::from(USER_PASSWORD_KEY))
-// }
+/// Verify a stored password. Prefer [`password::verify_stored`] for rehash decisions.
+pub fn verify_password(
+    hash: &str,
+    salt: &str,
+    algo: &str,
+    password: &str,
+) -> Result<bool, AuthError> {
+    Ok(password::verify_stored(hash, salt, algo, password)?.0)
+}
 
-// pub fn hash_password(password: &[u8], salt: &[u8]) -> String {
-//     argon2::hash_encoded(password, salt, &Config::default()).unwrap()
-// }
-// pub fn verify_password(hash: &str, password: &[u8]) -> Result<bool, AuthError> {
-//     Ok(argon2::verify_encoded(hash, password)?)
-// }
-
-pub fn verify_password_sha1(hash: &str,salt: &str, password: &str) -> Result<bool, AuthError> {
-    Ok(hash == sha1_salt(String::from(password), String::from(salt)))
+#[deprecated(note = "use verify_password with password_algo")]
+pub fn verify_password_sha1(hash: &str, salt: &str, password: &str) -> Result<bool, AuthError> {
+    Ok(password::verify_sha1(hash, salt, password))
 }
 
 

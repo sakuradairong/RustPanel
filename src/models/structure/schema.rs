@@ -14,13 +14,13 @@ table! {
         username -> Varchar,
         password -> Varchar,
         salt -> Varchar,
-        initial_password -> Varchar,
         authority -> Varchar,
         error_count -> Integer,
         status -> Integer,
         created_at -> Timestamp,
         updated_at -> Timestamp,
-        // deleted_at -> Nullable<Timestamp>,
+        password_algo -> Varchar,
+        must_change_password -> Integer,
     }
 }
 
