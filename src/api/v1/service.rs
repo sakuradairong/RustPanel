@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::api::auth::AuthUser;
 use crate::api::{ResponseStructure, ResponseStructureError};
-use crate::privileged::{self, Action, SystemctlVerb};
+use crate::privileged::{self, Action, AuditedError, SystemctlVerb};
 use crate::service::db::DBPool;
 use crate::service::rbac::{self, PERM_SERVICE_WRITE};
 
@@ -36,6 +36,24 @@ fn is_linux() -> bool {
 
 fn runner_error_response(err: privileged::RunnerError) -> HttpResponse {
     if err.is_rejected() {
+        ResponseStructureError::forbidden(&err.message())
+    } else {
+        HttpResponse::InternalServerError().json(ResponseStructureError {
+            success: false,
+            code: 500,
+            message: err.message(),
+        })
+    }
+}
+
+fn audited_error_response(err: AuditedError) -> HttpResponse {
+    if err.is_unavailable() {
+        HttpResponse::ServiceUnavailable().json(ResponseStructureError {
+            success: false,
+            code: 503,
+            message: err.message(),
+        })
+    } else if err.is_rejected() {
         ResponseStructureError::forbidden(&err.message())
     } else {
         HttpResponse::InternalServerError().json(ResponseStructureError {
@@ -101,13 +119,14 @@ async fn run_systemctl(
     if let Err(err) = rbac::require_perm(pool, user, PERM_SERVICE_WRITE) {
         return err.error_response();
     }
-    match privileged::execute(privileged::runner::request_for(
+    match privileged::execute_audited(
+        pool,
         Some(user.id),
         Action::Systemctl {
             verb,
             unit: Some(name.to_string()),
         },
-    ))
+    )
     .await
     {
         Ok(result) if result.exit_code == Some(0) || verb == SystemctlVerb::Status => {
@@ -135,7 +154,7 @@ async fn run_systemctl(
                 message,
             })
         }
-        Err(err) => runner_error_response(err),
+        Err(err) => audited_error_response(err),
     }
 }
 

@@ -5,8 +5,10 @@
 //! remains the deployment target (separate unit); call sites already go through
 //! this boundary so they do not invent `sh -c` strings.
 pub mod action;
+pub mod audited;
 pub mod runner;
 pub mod validate;
 
 pub use action::{Action, SystemctlVerb};
+pub use audited::{execute_audited, AuditedError};
 pub use runner::{execute, RunnerError, RunnerRequest, RunnerResult};

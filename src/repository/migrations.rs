@@ -12,7 +12,7 @@ use std::path::Path;
 use crate::service::db::DBPool;
 
 /// Product binary expects this schema version after a successful migrate.
-pub const EXPECTED_SCHEMA_VERSION: i64 = 4;
+pub const EXPECTED_SCHEMA_VERSION: i64 = 5;
 
 /// Bookkeeping table for applied migrations. Created outside numbered SQL so the
 /// runner can always inspect history even on a blank database.
@@ -76,6 +76,11 @@ const MIGRATIONS: &[Migration] = &[
         version: 4,
         name: "004_rbac",
         sql: include_str!("sql/004_rbac.sql"),
+    },
+    Migration {
+        version: 5,
+        name: "005_audit",
+        sql: include_str!("sql/005_audit.sql"),
     },
 ];
 

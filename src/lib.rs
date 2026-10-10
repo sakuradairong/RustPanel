@@ -18,4 +18,5 @@ pub mod models;
 pub mod api;
 pub mod repository;
 pub mod privileged;
+pub mod audit;
 pub mod test;
