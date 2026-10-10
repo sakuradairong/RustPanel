@@ -30,3 +30,14 @@ jobs:
       run: cargo install cargo-deny --locked --version "${CARGO_DENY_VERSION}"
     - name: cargo deny check
       run: cargo deny check --deny warnings
+    - name: Advisory ignore expiry gate
+      run: |
+        python3 - <<'PY'
+        import re, datetime, sys
+        text = open("deny.toml").read()
+        today = datetime.date.today()
+        expired = sorted({m.group(1) for m in re.finditer(r'EXPIRES (\d{4}-\d{2}-\d{2})', text)
+                          if datetime.date.fromisoformat(m.group(1)) < today})
+        if expired:
+            sys.exit(f"deny.toml advisory ignores expired: {expired}")
+        PY
