@@ -1,17 +1,19 @@
 # 安全密钥配置与升级
 
-当前版本取消了 JWT 和 Cookie Session 的公开默认密钥。启动前必须提供两个独立随机值；缺失或不合法会在创建运行目录、数据库和 HTTP 监听前返回错误。
+当前版本取消了 JWT 和 Cookie Session 的公开默认密钥。启动前必须提供独立的签名密钥、会话密钥，以及秘密信封用的主密钥（KEK）；缺失或不合法会在创建运行目录、数据库和 HTTP 监听前返回错误。
 
 | 环境变量 | 格式与最低长度 | 用途 |
 | --- | --- | --- |
 | `RP_SECRET_KEY` | 至少 32 字节，无空白字符 | HS256 JWT 签名 |
 | `RP_SESSION_KEY` | 至少 64 字节，无空白字符，与前者不同 | Actix Cookie Session |
+| `RP_MASTER_KEY` | 恰好 64 个十六进制字符（32 字节），无空白，非全零 | 秘密信封加密 KEK（RP-08）；也可用 `RP_MASTER_KEY_FILE` 或默认 `/etc/rustpanel/master.key`（0600，hex 或原始 32 字节） |
+| `RP_MASTER_KEY_ID` | 可选字符串 | 覆盖自动派生的 `key_id`（默认 `kek-` + SHA-256 前缀） |
 | `RP_FILE_ROOTS` | 冒号分隔的绝对路径（可选） | 文件 API 受管根；未设置时默认为 `/www:/var/www` |
 | `RP_FILE_EXPERT_MODE` | `1` / `true` / `yes` / `on`（可选） | 将 `/` 加入受管根；默认关闭 |
 
 建议使用操作系统随机源生成 32/64 个随机字节后转为 hex（64/128 个字符）。最低长度校验不能保证随机性，不要使用重复字符、口令或示例字符串。曾公开的默认值即使显式配置也会被拒绝。启动错误仅包含变量名和要求，不输出密钥值。
 
-`config/conf.yaml` 中的 `app.secret_key` 是历史配置字段，当前不是实际 JWT 密钥来源。仅修改它无法轮换 JWT。此批没有自动密钥生成、密钥文件读取或完整密钥轮换服务；部署者需将持久化密钥安全注入进程环境。
+`config/conf.yaml` 中的 `app.secret_key` 是历史配置字段，当前不是实际 JWT 密钥来源。仅修改它无法轮换 JWT。JWT/Session 密钥仍需经环境变量注入；`RP_MASTER_KEY` 也可改为读取 `RP_MASTER_KEY_FILE` 或 `/etc/rustpanel/master.key`（建议 0600）。此批提供 `rewrap_all` 原语，但没有面向运营的自动轮换 UI；丢失 KEK 则库内密文不可恢复，备份须与数据库分开保管。
 
 ## Linux / systemd
 
@@ -28,6 +30,7 @@ key_file = key_dir / 'security.env'
 content = (
     f'RP_SECRET_KEY={secrets.token_hex(32)}\n'
     f'RP_SESSION_KEY={secrets.token_hex(64)}\n'
+    f'RP_MASTER_KEY={secrets.token_hex(32)}\n'
 ).encode()
 fd = os.open(key_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
 with os.fdopen(fd, 'wb') as stream:
@@ -77,5 +80,7 @@ EnvironmentFile=/etc/rustpanel/security.env
 自 RP-05 起：schema 版本 **6**；监控 SSE 使用 `POST /api/v1/monitor/tickets` 签发的一次性短票据（`?ticket=`），禁止把长期 JWT 放进 EventSource URL；活动流会周期检测账号禁用并结束推送。
 
 自 RP-10 起：默认示例监听 `127.0.0.1`；向非 loopback 明文绑定会拒启，除非配置 `RP_TLS_CERT`+`RP_TLS_KEY` 或显式 `RP_ALLOW_INSECURE_PUBLIC_BIND=1`。会话 cookie 使用 `HttpOnly` + `SameSite=Lax`，并在非 loopback/TLS 场景推荐 `Secure`（可用 `RP_COOKIE_SECURE` 覆盖）。带 session cookie 的写请求需匹配的 `Origin`/`Referer`。首启 `must_change_password` 用户除 `/user/me`、改密、登出外返回 403；改密接口为 `POST /api/v1/user/change-password`。
+
+自 RP-08 起：schema 版本 **7**；面板秘密使用 AES-256-GCM 信封加密入库（每秘密随机 DEK，KEK 包裹 DEK）。**丢失 KEK 则密文不可恢复**；KEK 备份须与数据库备份分开保管并做过恢复演练。业务模块尚未全部改为 `secret_ref`；本批提供存储原语与启动门禁。
 
 这些保护尚不覆盖备份恢复 CLI、进程内 rustls 终结与全部宿主命令面迁入 runner。生产准入继续按开发文档的全部 M0 条件验收。

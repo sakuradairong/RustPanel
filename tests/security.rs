@@ -26,6 +26,10 @@ fn test_keys() {
             "RP_SESSION_KEY",
             "security-test-session-key-at-least-64-bytes-and-independent-of-signing",
         );
+        std::env::set_var(
+            "RP_MASTER_KEY",
+            "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f91",
+        );
     });
 }
 
@@ -430,7 +434,9 @@ fn panel_refuses_missing_or_invalid_keys_before_initializing_runtime() {
         command
             .current_dir(directory.path())
             .env_remove("RP_SECRET_KEY")
-            .env_remove("RP_SESSION_KEY");
+            .env_remove("RP_SESSION_KEY")
+            .env_remove("RP_MASTER_KEY")
+            .env_remove("RP_MASTER_KEY_FILE");
         if let Some((signing, session)) = keys {
             command
                 .env("RP_SECRET_KEY", signing)
@@ -444,4 +450,25 @@ fn panel_refuses_missing_or_invalid_keys_before_initializing_runtime() {
         assert!(!directory.path().join("runtime").exists());
         assert!(!directory.path().join("data.db3").exists());
     }
+}
+
+#[test]
+fn panel_refuses_missing_master_key_even_when_signing_keys_valid() {
+    let directory = tempfile::tempdir().unwrap();
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_panel"))
+        .current_dir(directory.path())
+        .env("RP_SECRET_KEY", TEST_SIGNING_KEY)
+        .env(
+            "RP_SESSION_KEY",
+            "security-test-session-key-at-least-64-bytes-and-independent-of-signing",
+        )
+        .env_remove("RP_MASTER_KEY")
+        .env_remove("RP_MASTER_KEY_FILE")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("RP_MASTER_KEY"));
+    assert!(!directory.path().join("runtime").exists());
+    assert!(!directory.path().join("data.db3").exists());
 }

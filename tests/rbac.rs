@@ -23,6 +23,10 @@ fn test_keys() {
             "RP_SESSION_KEY",
             "rbac-test-session-key-at-least-64-bytes-and-independent-value-xx",
         );
+        std::env::set_var(
+            "RP_MASTER_KEY",
+            "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f91",
+        );
     });
 }
 
