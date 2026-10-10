@@ -124,11 +124,35 @@
 
 要点：`cargo test --locked` **73** 通过（53 库 + 20 集成）；schema 期望版本 **7**。
 
+## 第十三批：安全栈合并评审与修复（2026-10-10）
+
+RP-01~RP-13 十一个 PR（#4~#14）按堆叠链逐个评审后合入 `dev`。评审发现两个必须修复的问题，已作为修复提交随对应 PR 合入：
+
+| 发现 | 严重度 | 处置 |
+| --- | --- | --- |
+| RP-03：22 个 docker handler 与 process kill/list、log list/read 仅 `AuthUser`，viewer 可越权操作宿主 | BLOCKER | 修复提交补挂 `require_perm`（docker:read/write、process:read/write、log:read），新增 viewer 越权拒绝与放行回归测试 |
+| RP-06：openat2 只做校验即丢弃 fd，后续按完整路径重开，仅叶子受 `O_NOFOLLOW` 保护，中间目录换软链仍可逃逸 | MAJOR | 修复提交改为 fd 锚定：`open_bound_file` 返回校验时打开的 fd（openat2 `RESOLVE_BENEATH\|NO_SYMLINKS` 优先，逐组件 `openat` 兜底）；目录列举经 `/proc/self/fd` 固定 inode；写入走父目录 fd 的 `openat`+`renameat` 并 fsync 父目录；新增中间目录交换回归测试 |
+
+合并后验证：`cargo test --locked` **76** 通过（53 库 + 23 集成）；dev 树与本地验证树逐字节一致；`build`/`supply-chain` CI 通过。
+
+### 评审遗留项（按优先级）
+
+1. **撤销失败被吞**：`admin.rs`/`user.rs` 改密后 `let _ = sessions::bump_token_version/revoke_all_for_user`——撤销写失败时旧 JWT 仍有效但返回 200，应传播错误。
+2. **登录限流内存无上限**：`rate_limit.rs` 对未认证端点的任意用户名/IP 建桶且不淘汰（DoS）；`clear_success` 清空整个 per-IP 桶；`realip_remote_addr()` 信任转发头。
+3. **outbox 无投递 worker**：`audit/store.rs` 的 pending/retry 函数无生产调用方（「可重投」未兑现）；事件与 outbox 写入非同事务；结果写失败被吞、intent 停留 pending。
+4. **行只增不减**：`sessions`/`sse_tickets`（含已消费/过期）/`audit_outbox` 无清理；`POST /monitor/tickets` 无限流。建议并入 RP-12 jobs。
+5. **monitor SSE 阻塞调用**：`poll_next` 在异步线程做阻塞 `pool.get()`+SQLite 查询（每 10s/连接），应改 `web::block`/channel；前端 EventSource 重连会一直复用已消费票据（401 风暴），需重新取票。
+6. **RBAC 双真相**：legacy `authority='admin'` 回退恒全权限；admin 更新用户与角色分配非一个事务；operator 的 `cert:issue/deploy` 因 ssl 路由要求 AdminUser 而不可达。
+7. **RP-08 无业务调用方**：`secrets` 存储只有测试使用，ACME/TLS 私钥仍明文落盘（`ssl.rs`）；DEK/KEK 明文无 zeroize；`decrypt` 不比对 `key_id`。
+8. **杂项**：`verify_sha1` 与 token 口令比较非常数时间（改 `subtle`）；`log.rs read_log` 仍在边界层外接受任意绝对路径；CSRF 中间件因无 cookie 认证流而近乎空转（保留作纵深防御，引入 cookie 流前不得移除）；RP-07 特权隔离（socket runner/降权）与输出上限前置仍未做（已在「接下来」跟踪）；deny advisory ignore 未设期限、`multiple-versions=allow` 待收紧。
+
+
 ## 接下来
 
-1. RP-07 后续：socket runner / 降权部署。
-2. RP-23 增强：refresh 轮换与会话过期清理任务。
-3. RP-11 后续：SBOM、签名、依赖重复版本收紧；rust-crypto/reqwest 升级后撤销 deny ignore。
-4. 将 DB/ACME/S3 凭证接入 RP-08 `secrets` 表。
+1. 第十三批评审遗留项 1–3（撤销错误传播、限流容量、outbox worker）。
+2. RP-07 后续：socket runner / 降权部署。
+3. RP-23 增强：refresh 轮换与会话过期清理任务。
+4. RP-11 后续：SBOM、签名、依赖重复版本收紧；rust-crypto/reqwest 升级后撤销 deny ignore。
+5. 将 DB/ACME/S3 凭证接入 RP-08 `secrets` 表。
 
 未完成全部 M0 前，不把已落地修复称为“生产安全已完成”。
