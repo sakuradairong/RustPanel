@@ -157,13 +157,14 @@ RP-01~RP-13 十一个 PR（#4~#14）按堆叠链逐个评审后合入 `dev`。�
 | #16 限流内存无上限 | \`check()\` 零分配；两 map 上限 10k 桶（超限先清过期再按最久未失败淘汰）；per-IP 桶按账号归属清理，成功登录不再重置整个 IP 桶 | #23 |
 | #17 outbox/清理 | \`complete_intent\` 事务化；维护任务（30s outbox 投递到面板日志 + 每小时对账/清理：session、票据、90 天审计行）；票据签发每用户 10 张上限（429）；\`audited.rs\`/\`file.rs\` 不再吞结果写错误 | #24 |
 | #18 SSE 阻塞 | SSE 体改为 spawn 任务 + mpsc 通道，状态检查与 sysinfo 采集走 \`spawn_blocking\`；前端断线重新取票重连（指数退避、8 次上限） | #25 |
+| #19 RBAC 单一真相 | 移除 legacy authority 回退（无角色行即无权限）；ssl 变更端点改走 \`cert:issue\`/\`cert:deploy\`（operator 权限首次可达）；update_user 事务性已在 #22 完成 | #27 |
 | #21 杂项 | \`verify_sha1\` 常数时间比较（subtle）；\`read_log\` 纳入 managed-root 边界（log roots 默认 runtime/logs + /var/log，可用 RP_LOG_ROOTS 覆盖）+ 20 万行内存上限；CSRF wrong-Origin 拒绝测试；deny advisory ignore 全部加 2027-03-31 期限；备份校验 SQLite URI 路径编码 | #26 |
 
-剩余：#19（RBAC 单一真相）、#20（secrets 接入业务面）。
+剩余：#20（secrets 接入业务面）——涉及部署时私钥物化等语义决策，实施计划见 issue #20 评论。
 
 ## 接下来
 
-1. #19 RBAC 单一真相（legacy 回退、事务性、权限可达性）；#20 secrets 接入业务面。
+1. #20 secrets 接入业务面（ACME/TLS 私钥改走 secrets 表，计划见 issue #20）。
 2. RP-07 后续：socket runner / 降权部署。
 3. RP-23 增强：refresh 轮换与会话过期清理任务。
 4. RP-11 后续：SBOM、签名、依赖重复版本收紧；rust-crypto/reqwest 升级后撤销 deny ignore。
