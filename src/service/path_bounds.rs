@@ -108,8 +108,10 @@ pub fn resolve_existing_under(path: &str, roots: &[PathBuf]) -> Result<BoundPath
     reject_symlink_components(&root, &relative)?;
     #[cfg(target_os = "linux")]
     {
-        if let Ok(bound) = linux::resolve_beneath(&root, &relative, linux::ResolveMode::Existing) {
-            return Ok(bound);
+        match linux::resolve_beneath(&root, &relative, linux::ResolveMode::Existing) {
+            Ok(bound) => return Ok(bound),
+            Err(err) if err.is_escape() => return Err(err),
+            Err(_) => {}
         }
     }
     resolve_via_canonicalize(&root, &relative, true)
@@ -137,24 +139,25 @@ pub fn resolve_for_write_under(path: &str, roots: &[PathBuf]) -> Result<BoundPat
     reject_symlink_components(&root, &parent_rel)?;
     #[cfg(target_os = "linux")]
     {
-        if let Ok(parent) =
-            linux::resolve_beneath(&root, &parent_rel, linux::ResolveMode::Directory)
-        {
-            let absolute = parent.absolute.join(file_name);
-            // Final name must not already be a symlink (replace would follow/overwrite oddly).
-            if absolute.exists() {
-                let meta = fs::symlink_metadata(&absolute)
-                    .map_err(|e| PathBoundError::Io(e.to_string()))?;
-                if meta.file_type().is_symlink() {
-                    return Err(PathBoundError::Escape(
-                        "Symlinks are not allowed in managed file paths".into(),
-                    ));
+        match linux::resolve_beneath(&root, &parent_rel, linux::ResolveMode::Directory) {
+            Ok(parent) => {
+                let absolute = parent.absolute.join(file_name);
+                if absolute.exists() {
+                    let meta = fs::symlink_metadata(&absolute)
+                        .map_err(|e| PathBoundError::Io(e.to_string()))?;
+                    if meta.file_type().is_symlink() {
+                        return Err(PathBoundError::Escape(
+                            "Symlinks are not allowed in managed file paths".into(),
+                        ));
+                    }
                 }
+                return Ok(BoundPath {
+                    absolute,
+                    root: parent.root,
+                });
             }
-            return Ok(BoundPath {
-                absolute,
-                root: parent.root,
-            });
+            Err(err) if err.is_escape() => return Err(err),
+            Err(_) => {}
         }
     }
     let parent_bound = if parent_rel.as_os_str().is_empty() {
@@ -187,6 +190,14 @@ pub fn atomic_write(bound: &BoundPath, bytes: &[u8]) -> Result<(), PathBoundErro
         .absolute
         .file_name()
         .ok_or_else(|| PathBoundError::Escape("Invalid write target name".into()))?;
+    // Parent must still be a real directory (not swapped for a symlink).
+    let parent_meta =
+        fs::symlink_metadata(parent).map_err(|e| PathBoundError::Io(e.to_string()))?;
+    if parent_meta.file_type().is_symlink() || !parent_meta.is_dir() {
+        return Err(PathBoundError::Escape(
+            "Write parent must be a non-symlink directory under a managed root".into(),
+        ));
+    }
     let mut tmp_name = name.to_os_string();
     tmp_name.push(".rp-tmp-");
     let suffix: String = rand::thread_rng()
@@ -195,9 +206,21 @@ pub fn atomic_write(bound: &BoundPath, bytes: &[u8]) -> Result<(), PathBoundErro
         .map(char::from)
         .collect();
     tmp_name.push(suffix);
-    let tmp_path = parent.join(tmp_name);
+    let tmp_path = parent.join(&tmp_name);
 
     let write_result = (|| -> Result<(), PathBoundError> {
+        #[cfg(unix)]
+        let mut file = {
+            use std::os::unix::fs::OpenOptionsExt;
+            fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .custom_flags(libc::O_NOFOLLOW)
+                .open(&tmp_path)
+                .map_err(|e| map_open_err("temp create failed", e))?
+        };
+        #[cfg(not(unix))]
         let mut file = fs::OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -216,6 +239,81 @@ pub fn atomic_write(bound: &BoundPath, bytes: &[u8]) -> Result<(), PathBoundErro
         let _ = fs::remove_file(&tmp_path);
     }
     write_result
+}
+
+/// Open a previously bound file without following a leaf symlink (TOCTOU harden).
+pub fn open_bound_file(bound: &BoundPath) -> Result<fs::File, PathBoundError> {
+    let meta = fs::symlink_metadata(&bound.absolute).map_err(|e| {
+        if e.kind() == io::ErrorKind::NotFound {
+            PathBoundError::Escape("Path not found under managed roots".into())
+        } else {
+            PathBoundError::Io(e.to_string())
+        }
+    })?;
+    if meta.file_type().is_symlink() {
+        return Err(PathBoundError::Escape(
+            "Symlinks are not allowed in managed file paths".into(),
+        ));
+    }
+    if !meta.is_file() {
+        return Err(PathBoundError::Escape("Path is not a regular file".into()));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        return fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(&bound.absolute)
+            .map_err(|e| map_open_err("open file failed", e));
+    }
+    #[cfg(not(unix))]
+    {
+        fs::File::open(&bound.absolute).map_err(|e| PathBoundError::Io(e.to_string()))
+    }
+}
+
+/// Open a previously bound directory without following a directory symlink.
+pub fn open_bound_dir(bound: &BoundPath) -> Result<fs::ReadDir, PathBoundError> {
+    let meta = fs::symlink_metadata(&bound.absolute).map_err(|e| {
+        if e.kind() == io::ErrorKind::NotFound {
+            PathBoundError::Escape("Path not found under managed roots".into())
+        } else {
+            PathBoundError::Io(e.to_string())
+        }
+    })?;
+    if meta.file_type().is_symlink() {
+        return Err(PathBoundError::Escape(
+            "Symlinks are not allowed in managed file paths".into(),
+        ));
+    }
+    if !meta.is_dir() {
+        return Err(PathBoundError::Escape("Path is not a directory".into()));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        // Confirm open with O_NOFOLLOW|O_DIRECTORY before read_dir.
+        let _dir = fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_DIRECTORY)
+            .open(&bound.absolute)
+            .map_err(|e| map_open_err("open directory failed", e))?;
+        drop(_dir);
+    }
+    fs::read_dir(&bound.absolute).map_err(|e| PathBoundError::Io(e.to_string()))
+}
+
+fn map_open_err(prefix: &str, err: io::Error) -> PathBoundError {
+    #[cfg(unix)]
+    {
+        if err.raw_os_error() == Some(libc::ELOOP) {
+            return PathBoundError::Escape(
+                "Symlinks are not allowed in managed file paths".into(),
+            );
+        }
+    }
+    PathBoundError::Io(format!("{prefix}: {err}"))
 }
 
 fn parse_request_path(path: &str) -> Result<PathBuf, PathBoundError> {
@@ -637,5 +735,21 @@ mod tests {
         let defaults = [PathBuf::from("/www"), PathBuf::from("/var/www")];
         assert!(match_root(Path::new("/etc/passwd"), &defaults).is_err());
         assert!(match_root(Path::new("/www/site"), &defaults).is_ok());
+    }
+
+    #[test]
+    fn open_bound_file_rejects_symlink_leaf_after_resolve_race() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        let target = root.join("doc.txt");
+        fs::write(&target, b"secret").unwrap();
+        let bound = resolve_existing_under(target.to_str().unwrap(), &roots_of(root)).unwrap();
+        // Simulate TOCTOU: replace the file with a symlink after resolve.
+        fs::remove_file(&target).unwrap();
+        symlink("/etc/passwd", &target).unwrap();
+        assert!(matches!(
+            open_bound_file(&bound),
+            Err(PathBoundError::Escape(_))
+        ));
     }
 }

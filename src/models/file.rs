@@ -13,7 +13,6 @@ use encoding_rs::{GBK, UTF_8};
 use rust_i18n::t;
 use serde::{Deserialize, Serialize};
 use std::ffi::OsStr;
-use std::fs::File;
 use std::io::Read;
 use std::time::UNIX_EPOCH;
 
@@ -60,15 +59,13 @@ pub fn save(data: SaveData) -> Result<bool, Box<dyn Error>> {
 }
 
 pub fn content_bounded(bound: BoundPath) -> Result<(String, String), Box<dyn Error>> {
-    let path = bound.absolute.as_path();
-    let metadata = match fs::metadata(path) {
-        Ok(m) => m,
-        Err(_) => {
-            return Err(Box::new(FileError {
-                message: String::from(t!("file.content.info_error")),
-            }))
-        }
-    };
+    let path = bound.absolute.clone();
+    let mut file = path_bounds::open_bound_file(&bound).map_err(bound_err)?;
+    let metadata = file.metadata().map_err(|_| {
+        Box::new(FileError {
+            message: String::from(t!("file.content.info_error")),
+        }) as Box<dyn Error>
+    })?;
 
     let mut extension = String::new();
 
@@ -87,29 +84,74 @@ pub fn content_bounded(bound: BoundPath) -> Result<(String, String), Box<dyn Err
         }));
     }
 
-    let mut file = match File::open(path) {
-        Ok(file) => file,
-        Err(_) => {
-            return Err(Box::new(FileError {
-                message: String::from(t!("file.content.open_error")),
-            }));
-        }
-    };
-
-    let content = match fs::read_to_string(path) {
-        Ok(content) => content,
-        Err(_) => {
-            let mut content_vec = Vec::new();
-            if file.read_to_end(&mut content_vec).is_err() {
-                return Err(Box::new(FileError {
-                    message: String::from(t!("file.content.read_error")),
-                }));
-            }
-            convert_gbk_to_utf8(content_vec)
-        }
+    let mut content_vec = Vec::new();
+    if file.read_to_end(&mut content_vec).is_err() {
+        return Err(Box::new(FileError {
+            message: String::from(t!("file.content.read_error")),
+        }));
+    }
+    let content = match String::from_utf8(content_vec.clone()) {
+        Ok(s) => s,
+        Err(_) => convert_gbk_to_utf8(content_vec),
     };
 
     Ok((sm4_encrypt_file(content.as_str()), extension))
+}
+
+pub fn list_bounded(
+    bound: BoundPath,
+) -> Result<FilesAndDirsInfo, path_bounds::PathBoundError> {
+    let entries = path_bounds::open_bound_dir(&bound)?;
+    let mut files_info = Vec::new();
+    let mut dirs_info = Vec::new();
+    let p = bound.absolute.to_string_lossy().into_owned();
+
+    for entry in entries.flatten() {
+        let name = match entry.file_name().into_string() {
+            Ok(n) => n,
+            Err(_) => continue,
+        };
+        // Use symlink_metadata so directory listings do not follow entry symlinks.
+        let metadata = match fs::symlink_metadata(entry.path()) {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        let modified_time = Some(match metadata.modified() {
+            Ok(t) => match t.duration_since(UNIX_EPOCH) {
+                Ok(d) => d.as_secs() as u64,
+                Err(_) => 0,
+            },
+            Err(_) => 0,
+        });
+        if metadata.file_type().is_symlink() {
+            // Surface symlink names as files without following them.
+            files_info.push(FileInfo {
+                name,
+                permissions: None,
+                size: None,
+                modified_time,
+            });
+        } else if metadata.is_file() {
+            files_info.push(FileInfo {
+                name,
+                permissions: None,
+                size: Some(metadata.len()),
+                modified_time,
+            });
+        } else if metadata.is_dir() {
+            dirs_info.push(DirInfo {
+                name,
+                permissions: None,
+                modified_time,
+            });
+        }
+    }
+
+    Ok(FilesAndDirsInfo {
+        path: p,
+        files: files_info,
+        dirs: dirs_info,
+    })
 }
 
 #[allow(dead_code)]
@@ -142,73 +184,4 @@ pub struct FilesAndDirsInfo {
     pub path: String,
     pub files: Vec<FileInfo>,
     pub dirs: Vec<DirInfo>,
-}
-
-pub fn get_files_and_dirs_list(dir_path: &str) -> FilesAndDirsInfo {
-    let mut files_info = Vec::new();
-    let mut dirs_info = Vec::new();
-    let mut p: String = String::new();
-
-    if let Ok(cannibalized_dir) = fs::canonicalize(dir_path) {
-        let cannibalized_str = cannibalized_dir.to_string_lossy();
-        if cannibalized_str.starts_with("\\\\?\\") {
-            let clean_path = if cannibalized_str.starts_with("\\\\?\\UNC\\") {
-                &cannibalized_str[9..]
-            } else {
-                &cannibalized_str[4..]
-            };
-
-            p = clean_path.to_string();
-        } else {
-            p = cannibalized_dir.to_string_lossy().into_owned();
-        }
-    }
-    if let Ok(entries) = fs::read_dir(dir_path) {
-        for entry in entries {
-            if let Ok(entry) = entry {
-                let path = entry.path();
-                if let Some(file_name) = path.file_name() {
-                    if let Some(file_name_str) = file_name.to_str() {
-                        if let Ok(metadata) = entry.metadata() {
-                            if metadata.is_file() {
-                                let info = FileInfo {
-                                    name: file_name_str.to_string(),
-                                    permissions: None,
-                                    size: Some(metadata.len()),
-                                    modified_time: Some(match metadata.modified() {
-                                        Ok(t) => match t.duration_since(UNIX_EPOCH) {
-                                            Ok(d) => d.as_secs() as u64,
-                                            Err(_) => 0,
-                                        },
-                                        Err(_) => 0,
-                                    }),
-                                };
-
-                                files_info.push(info);
-                            } else if metadata.is_dir() {
-                                let info = DirInfo {
-                                    name: file_name_str.to_string(),
-                                    permissions: None,
-                                    modified_time: Some(match metadata.modified() {
-                                        Ok(t) => match t.duration_since(UNIX_EPOCH) {
-                                            Ok(d) => d.as_secs() as u64,
-                                            Err(_) => 0,
-                                        },
-                                        Err(_) => 0,
-                                    }),
-                                };
-
-                                dirs_info.push(info);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    FilesAndDirsInfo {
-        path: p,
-        files: files_info,
-        dirs: dirs_info,
-    }
 }

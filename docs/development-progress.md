@@ -63,7 +63,7 @@
 - Viewer 对 installer install、nginx 建站、firewall 规则写、file save 返回 403。
 - 文件路径：`..`/根外路径/软链逃逸 403；受管根内 list 与原子写单测通过。
 
-构建和测试命令：`cargo test --locked`；本批结果为 43 个测试全部通过（29 个库测试 + 14 个集成测试，含 file_bounds）。系统级 TLS、ACME、浏览器回归和跨架构尚未验证。
+构建和测试命令：`cargo test --locked`；本批结果为 44 个测试全部通过（30 个库测试 + 14 个集成测试，含 file_bounds / TOCTOU 软链重开拒绝）。系统级 TLS、ACME、浏览器回归和跨架构尚未验证。
 
 ## 接下来
 

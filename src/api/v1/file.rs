@@ -45,14 +45,15 @@ pub async fn list(
         Ok(bound) => bound,
         Err(err) => return path_error_response(err),
     };
-    HttpResponse::Ok().json(ResponseStructure {
-        success: true,
-        code: 200,
-        message: String::from("success"),
-        data: Some(file::get_files_and_dirs_list(
-            bound.absolute.to_string_lossy().as_ref(),
-        )),
-    })
+    match file::list_bounded(bound) {
+        Ok(listing) => HttpResponse::Ok().json(ResponseStructure {
+            success: true,
+            code: 200,
+            message: String::from("success"),
+            data: Some(listing),
+        }),
+        Err(err) => path_error_response(err),
+    }
 }
 
 pub async fn save(
