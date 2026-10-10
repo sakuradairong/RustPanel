@@ -12,7 +12,7 @@ use actix_web::{cookie::{time::Duration, Key}, get, web, Responder};
 use diesel::{r2d2::ConnectionManager, SqliteConnection};
 use rust_panel::{
     api, common::sys::get_all_ip_addresses, errors::handlers, log_error, log_info, log_warn, models::user::find_user_by_id, service::{
-        db::{install, DBPool},
+        db::{migrate_and_bootstrap, DBPool},
         global::{CONF, SESSION_KEY, SECURITY_KEYS},
         init::init_app,
     }, test
@@ -50,8 +50,18 @@ async fn main() -> std::io::Result<()> {
         .build(ConnectionManager::<SqliteConnection>::new(
             CONF.database.path.as_str(),
         ))
-        .expect("Failed to create pool.");
-    install(&pool);
+        .map_err(|err| {
+            std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("Failed to create database pool: {err}"),
+            )
+        })?;
+    migrate_and_bootstrap(&pool).map_err(|err| {
+        std::io::Error::new(
+            std::io::ErrorKind::Other,
+            format!("Database migrate/bootstrap failed: {}", err.message()),
+        )
+    })?;
     let _ = test::demo(&pool).await;
 
     if !port_check::is_local_port_free(CONF.app.port) {

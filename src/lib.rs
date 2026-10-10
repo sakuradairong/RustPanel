@@ -16,4 +16,5 @@ pub mod common;
 pub mod errors;
 pub mod models;
 pub mod api;
+pub mod repository;
 pub mod test;
