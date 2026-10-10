@@ -163,19 +163,32 @@ async fn disabled_missing_changed_password_and_expired_users_are_rejected() {
         .unwrap()
         .batch_execute("UPDATE rp_users SET status=-1")
         .unwrap();
-    for path in [
-        "/api/v1/user/me".to_owned(),
-        format!("/api/v1/monitor?token={disabled}"),
-    ] {
-        let request = actix_test::TestRequest::get()
-            .uri(&path)
-            .insert_header(("Authorization", format!("Bearer {disabled}")))
-            .to_request();
-        assert_eq!(
-            actix_test::call_service(&app, request).await.status(),
-            StatusCode::UNAUTHORIZED
-        );
-    }
+    let request = actix_test::TestRequest::get()
+        .uri("/api/v1/user/me")
+        .insert_header(("Authorization", format!("Bearer {disabled}")))
+        .to_request();
+    assert_eq!(
+        actix_test::call_service(&app, request).await.status(),
+        StatusCode::UNAUTHORIZED
+    );
+    // Long-lived JWT in query is rejected even when Authorization is present.
+    let request = actix_test::TestRequest::get()
+        .uri(&format!("/api/v1/monitor?token={disabled}"))
+        .insert_header(("Authorization", format!("Bearer {disabled}")))
+        .to_request();
+    assert_eq!(
+        actix_test::call_service(&app, request).await.status(),
+        StatusCode::UNAUTHORIZED
+    );
+    // Bearer-only monitor path still uses session/DB checks (disabled user).
+    let request = actix_test::TestRequest::get()
+        .uri("/api/v1/monitor")
+        .insert_header(("Authorization", format!("Bearer {disabled}")))
+        .to_request();
+    assert_eq!(
+        actix_test::call_service(&app, request).await.status(),
+        StatusCode::UNAUTHORIZED
+    );
 
     pool.get()
         .unwrap()
@@ -276,12 +289,9 @@ async fn database_query_failure_fails_closed_for_regular_and_sse_requests() {
             + 3600
     })
     .unwrap();
-    for path in [
-        "/api/v1/user/me".to_owned(),
-        format!("/api/v1/monitor?token={bogus}"),
-    ] {
+    for path in ["/api/v1/user/me", "/api/v1/monitor"] {
         let request = actix_test::TestRequest::get()
-            .uri(&path)
+            .uri(path)
             .insert_header(("Authorization", format!("Bearer {bogus}")))
             .to_request();
         let status = actix_test::call_service(&app, request).await.status();
@@ -290,6 +300,14 @@ async fn database_query_failure_fails_closed_for_regular_and_sse_requests() {
             "{path} => {status}"
         );
     }
+    // Query JWT is never an auth path (rejected before DB).
+    let request = actix_test::TestRequest::get()
+        .uri(&format!("/api/v1/monitor?token={bogus}"))
+        .to_request();
+    assert_eq!(
+        actix_test::call_service(&app, request).await.status(),
+        StatusCode::UNAUTHORIZED
+    );
 }
 
 #[actix_web::test]

@@ -277,7 +277,10 @@ mod tests {
                 file.path().to_str().unwrap(),
             ))
             .unwrap();
-        assert_eq!(migrations::migrate(&pool).unwrap(), 5);
+        assert_eq!(
+            migrations::migrate(&pool).unwrap(),
+            migrations::EXPECTED_SCHEMA_VERSION
+        );
         (file, pool)
     }
 
