@@ -133,3 +133,36 @@ async fn cookie_mutating_request_without_origin_is_forbidden() {
         StatusCode::OK
     );
 }
+
+#[actix_web::test]
+async fn cookie_mutating_request_with_wrong_origin_is_forbidden() {
+    let (_f, pool, bearer) = pool_user(false);
+    let app = actix_test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool))
+            .wrap(api::csrf::CsrfProtect)
+            .service(api::route::v1()),
+    )
+    .await;
+
+    // Cross-origin cookie-authenticated mutates must fail closed: exact
+    // host:port match required, no suffix tricks.
+    for origin in [
+        "https://evil.example",
+        "http://127.0.0.1:8080.attacker.invalid",
+        "http://not127.0.0.1:8080",
+    ] {
+        let request = actix_test::TestRequest::post()
+            .uri("/api/v1/login/logout")
+            .insert_header(("Authorization", format!("Bearer {bearer}")))
+            .insert_header(("Cookie", "token=session-cookie-value"))
+            .insert_header(("Host", "127.0.0.1:8080"))
+            .insert_header(("Origin", origin))
+            .to_request();
+        assert_eq!(
+            actix_test::call_service(&app, request).await.status(),
+            StatusCode::FORBIDDEN,
+            "origin {origin} must be rejected"
+        );
+    }
+}

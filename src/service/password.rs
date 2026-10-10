@@ -45,7 +45,9 @@ pub fn verify_argon2id(password_hash: &str, password: &str) -> Result<bool, Pass
 }
 
 pub fn verify_sha1(password_hash: &str, salt: &str, password: &str) -> bool {
-    password_hash == sha1_salt(password.to_owned(), salt.to_owned())
+    use subtle::ConstantTimeEq;
+    let expected = sha1_salt(password.to_owned(), salt.to_owned());
+    password_hash.as_bytes().ct_eq(expected.as_bytes()).into()
 }
 
 /// Verify against the stored algorithm. Returns `(matches, should_rehash_to_argon2id)`.
