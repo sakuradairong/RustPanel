@@ -6,13 +6,11 @@
  * @LastEditTime: 2024-05-25 16:23:02
  * @FilePath: \RustPanel\src\api\v1\monitor.rs
  */
-use actix_web::{web, HttpRequest, HttpResponse, ResponseError};
+use actix_web::{body::BodyStream, web, HttpRequest, HttpResponse, ResponseError};
 use futures_util::stream::Stream;
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
-use std::pin::Pin;
 use std::sync::Mutex;
-use std::task::{Context, Poll};
 use std::time::Duration;
 use sysinfo::{Disks, Networks, System};
 
@@ -61,46 +59,57 @@ struct SystemStats {
     disks: Vec<DiskStats>,
 }
 
-struct MonitorStream {
-    interval: tokio::time::Interval,
-    pool: DBPool,
-    user_id: i32,
-    ticks: u32,
-    closed: bool,
-}
-
-impl Stream for MonitorStream {
-    type Item = Result<web::Bytes, actix_web::Error>;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        if self.closed {
-            return Poll::Ready(None);
-        }
-        if self.interval.poll_tick(cx).is_ready() {
-            self.ticks = self.ticks.wrapping_add(1);
-            // Re-check account status every ~10s (5 * 2s ticks).
-            if self.ticks % 5 == 0 {
-                let pool = self.pool.clone();
-                let user_id = self.user_id;
-                let still_ok = match pool.get() {
+/// Feeds the SSE body from a spawned task so no blocking work (SQLite status
+/// checks, sysinfo refresh) ever runs on the async worker thread.
+async fn run_monitor_stream(pool: DBPool, user_id: i32, tx: tokio::sync::mpsc::Sender<web::Bytes>) {
+    let mut interval = tokio::time::interval(Duration::from_secs(2));
+    let mut ticks: u32 = 0;
+    loop {
+        interval.tick().await;
+        ticks = ticks.wrapping_add(1);
+        // Re-check account status every ~10s (5 * 2s ticks). DB errors and
+        // join failures fail closed (stream ends).
+        if ticks % 5 == 0 {
+            let check_pool = pool.clone();
+            let still_ok = tokio::task::spawn_blocking(move || {
+                match check_pool.get() {
                     Ok(mut conn) => {
                         sse_tickets::user_still_active(&mut conn, user_id).unwrap_or(false)
                     }
                     Err(_) => false,
-                };
-                if !still_ok {
-                    self.closed = true;
-                    let bye = "event: revoked\ndata: {\"message\":\"session revoked\"}\n\n";
-                    return Poll::Ready(Some(Ok(web::Bytes::from(bye))));
                 }
+            })
+            .await
+            .unwrap_or(false);
+            if !still_ok {
+                let bye = "event: revoked\ndata: {\"message\":\"session revoked\"}\n\n";
+                let _ = tx.send(web::Bytes::from(bye)).await;
+                return;
             }
-            let stats = collect_stats();
-            let json = serde_json::to_string(&stats).unwrap_or_else(|_| String::new());
-            let data = format!("data: {}\n\n", json);
-            Poll::Ready(Some(Ok(web::Bytes::from(data))))
-        } else {
-            Poll::Pending
         }
+        let stats = tokio::task::spawn_blocking(collect_stats).await;
+        let json = match stats {
+            Ok(stats) => serde_json::to_string(&stats).unwrap_or_else(|_| String::new()),
+            Err(_) => return,
+        };
+        let data = format!("data: {json}\n\n");
+        if tx.send(web::Bytes::from(data)).await.is_err() {
+            // Client disconnected; stop producing.
+            return;
+        }
+    }
+}
+
+struct MonitorChannelStream(tokio::sync::mpsc::Receiver<web::Bytes>);
+
+impl Stream for MonitorChannelStream {
+    type Item = Result<web::Bytes, actix_web::Error>;
+
+    fn poll_next(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        self.0.poll_recv(cx).map(|item| item.map(Ok))
     }
 }
 
@@ -148,22 +157,14 @@ fn collect_stats() -> SystemStats {
     }
 }
 
-fn monitor_stream(pool: DBPool, user_id: i32) -> MonitorStream {
-    MonitorStream {
-        interval: tokio::time::interval(Duration::from_secs(2)),
-        pool,
-        user_id,
-        ticks: 0,
-        closed: false,
-    }
-}
-
 fn sse_ok(pool: DBPool, user_id: i32) -> HttpResponse {
+    let (tx, rx) = tokio::sync::mpsc::channel::<web::Bytes>(8);
+    tokio::spawn(run_monitor_stream(pool, user_id, tx));
     HttpResponse::Ok()
         .insert_header(("Content-Type", "text/event-stream"))
         .insert_header(("Cache-Control", "no-cache"))
         .insert_header(("Connection", "keep-alive"))
-        .streaming(monitor_stream(pool, user_id))
+        .body(BodyStream::new(MonitorChannelStream(rx)))
 }
 
 #[derive(Deserialize)]
