@@ -76,6 +76,7 @@ fn seed_initial_admin_if_empty(pool: &DBPool) -> Result<Option<BootstrapAdmin>, 
             schema::rp_users::updated_at.eq(now),
             schema::rp_users::password_algo.eq(ALGO_ARGON2ID),
             schema::rp_users::must_change_password.eq(1),
+            schema::rp_users::token_version.eq(0),
         ))
         .execute(&mut *conn)
         .map_err(|err| MigrationError::new(format!("Failed to create initial admin user: {err}")))?;

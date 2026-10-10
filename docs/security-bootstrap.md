@@ -52,9 +52,11 @@ EnvironmentFile=/etc/rustpanel/security.env
 3. 替换产物并重新启动，确认服务可用，所有使用旧密钥的 JWT 失效，用户需重新登录。若 migration checksum 与当前二进制不一致，面板会拒绝启动。
 4. 不要将旧公开密钥设进环境变量来恢复会话。回退也不能重新暴露未认证的 SSL 写接口。回退到旧二进制时需使用匹配该版本的数据库快照。
 
-密钥只在进程初始化时读取；改变环境文件后需重启。轮换 JWT key 会使旧 JWT 全部失效；独立会话撤销、刷新令牌和 `kid` 多密钥窗口将在 RP-23 实施。
+密钥只在进程初始化时读取；改变环境文件后需重启。轮换 JWT key 会使旧 JWT 全部失效。
 
 自 RP-01 起：新口令使用 Argon2id；数据库不再保存 `initial_password` 明文。旧 SHA-1 用户在登录成功后即时重哈希。首次安装时一次性管理员口令仅写入启动日志（内存生成），并标记 `must_change_password`。
+
+自 RP-23 起：访问令牌只携带用户 id + `jti` + `token_version`，并在 `sessions` 表登记；登出或改密会立即使旧令牌失效。升级后需重新登录。`kid` 多密钥窗口与 refresh cookie 轮换仍待后续增强。
 
 ## 本批行为变化
 

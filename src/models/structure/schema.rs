@@ -21,6 +21,7 @@ table! {
         updated_at -> Timestamp,
         password_algo -> Varchar,
         must_change_password -> Integer,
+        token_version -> Integer,
     }
 }
 

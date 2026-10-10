@@ -17,7 +17,8 @@ pub fn v1() -> actix_web::Scope {
             .service(
                 web::scope("/login")
                     .route("/sign/{security_dir}", web::post().to(v1::login::sign))
-                    .route("/security_dir", web::get().to(v1::login::get_security_dir)),
+                    .route("/security_dir", web::get().to(v1::login::get_security_dir))
+                    .route("/logout", web::post().to(v1::login::logout)),
             )
             .service(
                 web::scope("/log")

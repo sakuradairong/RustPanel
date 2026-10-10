@@ -13,6 +13,7 @@ use crate::{
         db::DBPool,
         global::{CONF, USER_PASSWORD_KEY},
         password::{self, PasswordError},
+        sessions,
     },
 };
 use actix_web::{dev::Payload, web, Error, FromRequest, HttpRequest};
@@ -20,25 +21,64 @@ use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, 
 use serde::{Deserialize, Serialize};
 use std::{future::Future, pin::Pin};
 
-// we need the same data
-// simple aliasing makes the intentions clear and its more readable
-pub type AuthUser = SlimUser;
+/// Authenticated identity resolved from a revocable session JWT.
+#[derive(Debug, Clone)]
+pub struct AuthUser {
+    pub id: i32,
+    pub username: String,
+    pub authority: String,
+    pub created_at: chrono::NaiveDateTime,
+    pub jti: String,
+}
 
-/// Resolve identity against current database state, including role and disabled status.
-/// Legacy JWT payloads remain accepted during the upcoming session/schema migration.
+impl From<(SlimUser, String)> for AuthUser {
+    fn from((user, jti): (SlimUser, String)) -> Self {
+        Self {
+            id: user.id,
+            username: user.username,
+            authority: user.authority,
+            created_at: user.created_at,
+            jti,
+        }
+    }
+}
+
+/// Access-token claims: immutable user id only — no password material.
+#[derive(Debug, Serialize, Deserialize)]
+pub(crate) struct Claims {
+    /// Opaque user id string.
+    pub(crate) sub: String,
+    pub(crate) jti: String,
+    pub(crate) iat: usize,
+    pub(crate) exp: usize,
+    /// Snapshot of `rp_users.token_version` at issue time.
+    pub(crate) ver: i32,
+}
+
+/// Resolve identity against session table + current database user state.
 pub(crate) fn authenticate_token(token: &str, pool: &DBPool) -> Result<AuthUser, CommonError> {
     let claims = decode_jwt(token)
         .map_err(|_| CommonError::Unauthorized("Invalid credentials".into()))?;
-    let subject: SlimUser = serde_json::from_str(&claims.sub)
+    let user_id: i32 = claims
+        .sub
+        .parse()
         .map_err(|_| CommonError::Unauthorized("Invalid credentials".into()))?;
-    let user = find_user_by_id(subject.id, pool)
+
+    {
+        // Release the pool connection before the next checkout in find_user_by_id.
+        let mut conn = pool.get().map_err(|_| {
+            CommonError::ServiceUnavailable("Authentication database unavailable".into())
+        })?;
+        sessions::validate_session(&mut conn, &claims.jti, user_id)?;
+    }
+
+    let user = find_user_by_id(user_id, pool)
         .map_err(|_| CommonError::ServiceUnavailable("Authentication database unavailable".into()))?
         .ok_or_else(|| CommonError::Unauthorized("Invalid credentials".into()))?;
-    if user.status != 0 || user.password != subject.password {
+    if user.status != 0 || user.token_version != claims.ver {
         return Err(CommonError::Unauthorized("Invalid credentials".into()));
     }
-    // Never authorize using a stale role from the JWT.
-    Ok(user.into())
+    Ok(AuthUser::from((user.into(), claims.jti)))
 }
 
 impl FromRequest for AuthUser {
@@ -46,16 +86,23 @@ impl FromRequest for AuthUser {
     type Future = Pin<Box<dyn Future<Output = Result<AuthUser, Error>>>>;
 
     fn from_request(req: &HttpRequest, _: &mut Payload) -> Self::Future {
-        let token = req.headers().get("Authorization")
+        let token = req
+            .headers()
+            .get("Authorization")
             .and_then(|value| value.to_str().ok())
             .map(|value| value.strip_prefix("Bearer ").unwrap_or(value).to_owned());
         let pool = req.app_data::<web::Data<DBPool>>().cloned();
         Box::pin(async move {
-            let token = token.ok_or_else(|| CommonError::Unauthorized("Invalid credentials".into()))?;
-            let pool = pool.ok_or_else(|| CommonError::ServiceUnavailable("Authentication database unavailable".into()))?;
+            let token =
+                token.ok_or_else(|| CommonError::Unauthorized("Invalid credentials".into()))?;
+            let pool = pool.ok_or_else(|| {
+                CommonError::ServiceUnavailable("Authentication database unavailable".into())
+            })?;
             web::block(move || authenticate_token(&token, pool.get_ref()))
                 .await
-                .map_err(|_| CommonError::ServiceUnavailable("Authentication service unavailable".into()))?
+                .map_err(|_| {
+                    CommonError::ServiceUnavailable("Authentication service unavailable".into())
+                })?
                 .map_err(Error::from)
         })
     }
@@ -91,7 +138,6 @@ impl From<PasswordError> for AuthError {
     }
 }
 
-/// Verify a stored password. Prefer [`password::verify_stored`] for rehash decisions.
 pub fn verify_password(
     hash: &str,
     salt: &str,
@@ -101,43 +147,39 @@ pub fn verify_password(
     Ok(password::verify_stored(hash, salt, algo, password)?.0)
 }
 
-#[deprecated(note = "use verify_password with password_algo")]
-pub fn verify_password_sha1(hash: &str, salt: &str, password: &str) -> Result<bool, AuthError> {
-    Ok(password::verify_sha1(hash, salt, password))
-}
-
-
-#[derive(Debug, Serialize, Deserialize)]
-pub(crate) struct Claims {
-    pub(crate) sub: String,
-    pub(crate) exp: usize,
-}
-
-pub fn generate_jwt(subject: &str) -> Result<String, jsonwebtoken::errors::Error> {
-    // 生成 JWT
-    Ok(encode(
+pub fn generate_jwt(
+    user_id: i32,
+    jti: &str,
+    token_version: i32,
+    exp_unix: i64,
+) -> Result<String, jsonwebtoken::errors::Error> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as usize)
+        .unwrap_or(0);
+    encode(
         &Header::new(Algorithm::HS256),
         &Claims {
-            sub: String::from(subject),
-            exp: (match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
-                Ok(d) => d.as_secs(),
-                Err(_) => 0,
-            } + (CONF.app.session_ttl * 60 * 60) as u64) as usize,
+            sub: user_id.to_string(),
+            jti: jti.to_owned(),
+            iat: now,
+            exp: exp_unix as usize,
+            ver: token_version,
         },
         &EncodingKey::from_secret(USER_PASSWORD_KEY.as_bytes()),
-    )?)
+    )
 }
 
 pub(crate) fn decode_jwt(token: &str) -> Result<Claims, jsonwebtoken::errors::Error> {
     let key = DecodingKey::from_secret(USER_PASSWORD_KEY.as_bytes());
-
-    // 手动创建 Validation 实例，并设置所需的字段
     let mut validation = Validation::default();
     validation.validate_exp = true;
     validation.algorithms = vec![Algorithm::HS256];
-
     let token_data = decode::<Claims>(token, &key, &validation)?;
-
-
     Ok(token_data.claims)
+}
+
+/// Session TTL used when issuing tokens (seconds).
+pub fn session_ttl_seconds() -> i64 {
+    i64::from(CONF.app.session_ttl) * 60 * 60
 }
