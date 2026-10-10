@@ -5,8 +5,12 @@
 //! When neither is set, defaults are `/www` and `/var/www` (not `/`).
 //!
 //! On Linux, resolution prefers `openat2(RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS)`
-//! and falls back to dirfd + `O_NOFOLLOW` segment walks. Writes use a temp file
-//! in the target directory plus `rename`.
+//! and falls back to dirfd + `O_NOFOLLOW` segment walks. Reads, listings and
+//! writes keep the directory fd that passed validation and operate through
+//! `openat`/`renameat` (listing pins the inode via `/proc/self/fd`), so a
+//! post-resolve swap of an intermediate directory cannot redirect access
+//! outside the managed root. Writes use a temp file in the target directory
+//! plus `renameat`, then fsync the parent directory.
 use std::{
     env, fs,
     io::{self, Write},
@@ -183,6 +187,15 @@ pub fn resolve_for_write_under(path: &str, roots: &[PathBuf]) -> Result<BoundPat
 
 /// Atomically replace/create `bound.absolute` with `bytes` (temp file + rename).
 pub fn atomic_write(bound: &BoundPath, bytes: &[u8]) -> Result<(), PathBoundError> {
+    // On Linux the write is anchored to a parent directory fd opened with a
+    // no-symlink walk; temp creation and rename both go through that fd, so
+    // intermediate-directory swaps cannot redirect the write out of the root.
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(relative) = bound.absolute.strip_prefix(&bound.root) {
+            return linux::atomic_write_beneath(&bound.root, relative, bytes);
+        }
+    }
     let parent = bound.absolute.parent().ok_or_else(|| {
         PathBoundError::Escape("Refusing to write without a parent directory".into())
     })?;
@@ -243,6 +256,19 @@ pub fn atomic_write(bound: &BoundPath, bytes: &[u8]) -> Result<(), PathBoundErro
 
 /// Open a previously bound file without following a leaf symlink (TOCTOU harden).
 pub fn open_bound_file(bound: &BoundPath) -> Result<fs::File, PathBoundError> {
+    // Re-walk from the managed root holding the fd, so the read is pinned to
+    // the inode that passed validation even if an intermediate directory is
+    // swapped for a symlink after `resolve_*`.
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(relative) = bound.absolute.strip_prefix(&bound.root) {
+            match linux::open_beneath_fd(&bound.root, relative, false) {
+                Ok(fd) => return Ok(fs::File::from(fd)),
+                Err(err) if err.is_escape() => return Err(err),
+                Err(_) => {}
+            }
+        }
+    }
     let meta = fs::symlink_metadata(&bound.absolute).map_err(|e| {
         if e.kind() == io::ErrorKind::NotFound {
             PathBoundError::Escape("Path not found under managed roots".into())
@@ -275,6 +301,24 @@ pub fn open_bound_file(bound: &BoundPath) -> Result<fs::File, PathBoundError> {
 
 /// Open a previously bound directory without following a directory symlink.
 pub fn open_bound_dir(bound: &BoundPath) -> Result<fs::ReadDir, PathBoundError> {
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(relative) = bound.absolute.strip_prefix(&bound.root) {
+            match linux::open_beneath_fd(&bound.root, relative, true) {
+                Ok(fd) => {
+                    // Pin the listing to the validated inode through
+                    // /proc/self/fd instead of re-resolving the full path.
+                    use std::os::fd::AsRawFd;
+                    let proc_path = format!("/proc/self/fd/{}", fd.as_raw_fd());
+                    return fs::read_dir(&proc_path).map_err(|e| {
+                        PathBoundError::Io(format!("open directory failed: {e}"))
+                    });
+                }
+                Err(err) if err.is_escape() => return Err(err),
+                Err(_) => {}
+            }
+        }
+    }
     let meta = fs::symlink_metadata(&bound.absolute).map_err(|e| {
         if e.kind() == io::ErrorKind::NotFound {
             PathBoundError::Escape("Path not found under managed roots".into())
@@ -472,7 +516,7 @@ mod linux {
     use std::{
         ffi::{CString, OsStr},
         fs,
-        os::fd::{FromRawFd, IntoRawFd, OwnedFd},
+        os::fd::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd},
         os::unix::ffi::OsStrExt,
         path::{Component, Path},
     };
@@ -657,6 +701,210 @@ mod linux {
     fn path_to_cstring(path: &Path) -> Result<CString, PathBoundError> {
         CString::new(path.as_os_str().as_bytes())
             .map_err(|_| PathBoundError::Escape("Path contains interior NUL".into()))
+    }
+
+    /// Walk `root/relative` opening every component with `O_NOFOLLOW` and
+    /// return the leaf file descriptor, so later reads stay pinned to the
+    /// inode that passed validation (no post-resolve re-resolution by path).
+    /// Prefers a single atomic `openat2(RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS)`
+    /// and falls back to a per-component `openat` walk.
+    pub fn open_beneath_fd(
+        root: &Path,
+        relative: &Path,
+        leaf_directory: bool,
+    ) -> Result<OwnedFd, PathBoundError> {
+        let components: Vec<&OsStr> = relative
+            .components()
+            .filter_map(|c| match c {
+                Component::Normal(s) => Some(s),
+                Component::CurDir | Component::ParentDir => None,
+                _ => None,
+            })
+            .collect();
+        if components.is_empty() {
+            if leaf_directory {
+                return open_root(root);
+            }
+            return Err(PathBoundError::Escape(
+                "Managed root cannot be opened as a file".into(),
+            ));
+        }
+        let root_fd = open_root(root)?;
+        let rel_cstr = path_to_cstring(relative)?;
+        let atomic_flags = if leaf_directory {
+            (libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC) as u64
+        } else {
+            // O_NONBLOCK refuses to block on FIFOs; regular files are
+            // validated with fstat below before the fd is handed out.
+            (libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC) as u64
+        };
+        let root_raw = root_fd.as_raw_fd();
+        let openat2_result = openat2(root_raw, &rel_cstr, atomic_flags, 0);
+        drop(root_fd);
+        match openat2_result {
+            Ok(fd) => {
+                if !leaf_directory {
+                    validate_regular_file(&fd)?;
+                }
+                return Ok(fd);
+            }
+            Err(code)
+                if code == libc::ENOENT
+                    || code == libc::ENOTDIR
+                    || code == libc::ELOOP
+                    || code == libc::EXDEV =>
+            {
+                return Err(PathBoundError::Escape(
+                    "Path escapes managed root or uses disallowed symlink".into(),
+                ))
+            }
+            Err(_) => {}
+        }
+
+        // Fallback: per-component walk (openat2 unavailable).
+        let root_fd = open_root(root)?;
+        let mut dirfd = root_fd.into_raw_fd();
+        let last = components.len() - 1;
+        for (idx, name) in components.iter().enumerate() {
+            let is_last = idx == last;
+            let cname = os_to_cstring(name)?;
+            let flags = if is_last {
+                if leaf_directory {
+                    libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC
+                } else {
+                    libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC
+                }
+            } else {
+                libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC
+            };
+            let next = unsafe { libc::openat(dirfd, cname.as_ptr(), flags) };
+            unsafe { libc::close(dirfd) };
+            if next < 0 {
+                return Err(map_openat_errno("open beneath root failed"));
+            }
+            if is_last {
+                let fd = unsafe { OwnedFd::from_raw_fd(next) };
+                if !leaf_directory {
+                    validate_regular_file(&fd)?;
+                }
+                return Ok(fd);
+            }
+            dirfd = next;
+        }
+        unreachable!("open_beneath_fd loop must return on the last component")
+    }
+
+    /// Reject non-regular leaves (FIFOs, devices, sockets) and clear
+    /// O_NONBLOCK from the handed-out descriptor.
+    fn validate_regular_file(fd: &OwnedFd) -> Result<(), PathBoundError> {
+        let raw = fd.as_raw_fd();
+        let mut st: libc::stat = unsafe { std::mem::zeroed() };
+        if unsafe { libc::fstat(raw, &mut st) } != 0 {
+            return Err(PathBoundError::Io("stat beneath root failed".into()));
+        }
+        if st.st_mode & libc::S_IFMT != libc::S_IFREG {
+            return Err(PathBoundError::Escape(
+                "Path is not a regular file".into(),
+            ));
+        }
+        unsafe {
+            let fl = libc::fcntl(raw, libc::F_GETFL);
+            if fl >= 0 {
+                libc::fcntl(raw, libc::F_SETFL, fl & !libc::O_NONBLOCK);
+            }
+        }
+        Ok(())
+    }
+
+    /// Atomically create/replace `root/relative` with `bytes`, anchored to a
+    /// parent directory fd: temp file via `openat(O_EXCL|O_NOFOLLOW)`, publish
+    /// via `renameat`, then fsync the parent so the rename is durable.
+    pub fn atomic_write_beneath(
+        root: &Path,
+        relative: &Path,
+        bytes: &[u8],
+    ) -> Result<(), PathBoundError> {
+        use rand::{distributions::Alphanumeric, Rng};
+        use std::io::Write;
+
+        let name = relative
+            .file_name()
+            .ok_or_else(|| PathBoundError::Escape("Invalid write target name".into()))?;
+        let parent_rel = relative
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| Path::new("").to_path_buf());
+        let parent_fd = if parent_rel.as_os_str().is_empty() {
+            open_root(root)?
+        } else {
+            open_beneath_fd(root, &parent_rel, true)?
+        };
+        let parent_raw = parent_fd.as_raw_fd();
+
+        let mut tmp_name = name.to_os_string();
+        tmp_name.push(".rp-tmp-");
+        let suffix: String = rand::thread_rng()
+            .sample_iter(&Alphanumeric)
+            .take(12)
+            .map(char::from)
+            .collect();
+        tmp_name.push(suffix);
+        let tmp_c = os_to_cstring(tmp_name.as_os_str())?;
+        let name_c = os_to_cstring(name)?;
+
+        let write_result = (|| -> Result<(), PathBoundError> {
+            let fd = unsafe {
+                libc::openat(
+                    parent_raw,
+                    tmp_c.as_ptr(),
+                    libc::O_WRONLY
+                        | libc::O_CREAT
+                        | libc::O_EXCL
+                        | libc::O_NOFOLLOW
+                        | libc::O_CLOEXEC,
+                    0o600 as mode_t,
+                )
+            };
+            if fd < 0 {
+                return Err(map_openat_errno("temp create failed"));
+            }
+            let mut file = fs::File::from(unsafe { OwnedFd::from_raw_fd(fd) });
+            file.write_all(bytes)
+                .map_err(|e| PathBoundError::Io(format!("temp write failed: {e}")))?;
+            file.sync_all()
+                .map_err(|e| PathBoundError::Io(format!("temp sync failed: {e}")))?;
+            drop(file);
+            let rc = unsafe {
+                libc::renameat(parent_raw, tmp_c.as_ptr(), parent_raw, name_c.as_ptr())
+            };
+            if rc != 0 {
+                return Err(map_openat_errno("atomic rename failed"));
+            }
+            // Persist the directory entry change itself.
+            if unsafe { libc::fsync(parent_raw) } != 0 {
+                let err = std::io::Error::last_os_error();
+                return Err(PathBoundError::Io(format!("parent sync failed: {err}")));
+            }
+            Ok(())
+        })();
+
+        if write_result.is_err() {
+            unsafe { libc::unlinkat(parent_raw, tmp_c.as_ptr(), 0) };
+        }
+        write_result
+    }
+
+    fn map_openat_errno(prefix: &str) -> PathBoundError {
+        let err = std::io::Error::last_os_error();
+        match err.raw_os_error() {
+            Some(code) if code == libc::ELOOP || code == libc::EMLINK => {
+                PathBoundError::Escape("Symlinks are not allowed in managed file paths".into())
+            }
+            Some(code) if code == libc::ENOENT => {
+                PathBoundError::Escape("Path not found under managed roots".into())
+            }
+            _ => PathBoundError::Io(format!("{prefix}: {err}")),
+        }
     }
 
     fn os_to_cstring(name: &OsStr) -> Result<CString, PathBoundError> {

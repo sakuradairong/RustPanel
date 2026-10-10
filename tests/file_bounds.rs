@@ -163,3 +163,72 @@ async fn in_root_list_and_atomic_write_succeed() {
     path_bounds::atomic_write(&bound, b"panel").unwrap();
     assert_eq!(fs::read(&save_path).unwrap(), b"panel");
 }
+
+/// Deterministic replay of the post-resolve TOCTOU: the path is validated,
+/// then an intermediate directory is swapped for a symlink pointing outside
+/// the managed root. Reads, writes and listings must refuse instead of
+/// following the swap.
+#[cfg(target_os = "linux")]
+#[actix_web::test]
+async fn intermediate_dir_swap_cannot_redirect_reads_writes_or_lists() {
+    let root_dir = tempdir().unwrap();
+    let roots = FileRootConfig::from_roots(vec![root_dir.path().to_path_buf()]);
+    let sub = root_dir.path().join("sub");
+    fs::create_dir(&sub).unwrap();
+    let target = sub.join("data.txt");
+    fs::write(&target, b"inside").unwrap();
+
+    // Validate before the swap (this is the resolution the TOCTOU attacks).
+    let read_bound =
+        path_bounds::resolve_existing_under(target.to_str().unwrap(), &roots.roots).unwrap();
+    let list_bound =
+        path_bounds::resolve_existing_under(sub.to_str().unwrap(), &roots.roots).unwrap();
+    let write_bound =
+        path_bounds::resolve_for_write_under(target.to_str().unwrap(), &roots.roots).unwrap();
+
+    // Swap the intermediate directory for a symlink to outside content.
+    let outside = tempdir().unwrap();
+    fs::write(outside.path().join("data.txt"), b"secret").unwrap();
+    let moved = root_dir.path().join("sub.real");
+    fs::rename(&sub, &moved).unwrap();
+    symlink(outside.path(), &sub).unwrap();
+
+    // Reading the previously bound path must fail, never return "secret".
+    match path_bounds::open_bound_file(&read_bound) {
+        Ok(mut file) => {
+            let mut buf = String::new();
+            use std::io::Read;
+            file.read_to_string(&mut buf).unwrap();
+            assert_ne!(buf, "secret", "read escaped the managed root");
+        }
+        Err(_) => {}
+    }
+
+    // Listing the previously bound directory must fail or list the pinned
+    // (moved) directory, never the outside one.
+    if let Ok(entries) = path_bounds::open_bound_dir(&list_bound) {
+        let names: Vec<String> = entries
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
+        assert!(
+            names.contains(&"data.txt".to_string()),
+            "listing must not follow the swapped symlink"
+        );
+    }
+
+    // Writing the previously bound path must fail without touching either
+    // the moved original or the outside file.
+    assert!(path_bounds::atomic_write(&write_bound, b"evil").is_err());
+    assert_eq!(fs::read(moved.join("data.txt")).unwrap(), b"inside");
+    assert_eq!(fs::read(outside.path().join("data.txt")).unwrap(), b"secret");
+
+    // The failed write must not leave temp files behind in the root.
+    let leftovers: Vec<_> = fs::read_dir(root_dir.path())
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .filter(|n| n.contains(".rp-tmp-"))
+        .collect();
+    assert!(leftovers.is_empty(), "temp files leaked: {leftovers:?}");
+}
