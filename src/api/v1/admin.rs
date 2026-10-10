@@ -9,7 +9,10 @@
 
 use actix_web::{web, HttpResponse};
 use chrono::Utc;
+use diesel::connection::SimpleConnection;
 use diesel::prelude::*;
+use diesel::sql_query;
+use diesel::sql_types::BigInt;
 use serde::{Deserialize, Serialize};
 
 use crate::api::auth::AdminUser;
@@ -309,46 +312,60 @@ pub async fn update_user(
     if clear_must_change {
         user.must_change_password = 0;
     }
+    // Password rotation and account disabling must invalidate existing
+    // sessions; role reassignment must not drift from the user row.
+    let revoke_sessions = clear_must_change || user.status != 0;
 
-    match diesel::update(rp_users::table.find(id))
-        .set((
-            rp_users::username.eq(&user.username),
-            rp_users::password.eq(&user.password),
-            rp_users::salt.eq(&user.salt),
-            rp_users::authority.eq(&user.authority),
-            rp_users::status.eq(user.status),
-            rp_users::updated_at.eq(user.updated_at),
-            rp_users::password_algo.eq(&user.password_algo),
-            rp_users::must_change_password.eq(user.must_change_password),
-        ))
-        .execute(&mut *conn)
-    {
-        Ok(_) => {
-            if let Err(err) = rbac::assign_role_for_authority(&mut conn, id, &user.authority) {
-                return HttpResponse::InternalServerError().json(ResponseStructureError {
-                    success: false,
-                    code: 500,
-                    message: err,
-                });
-            }
-            if clear_must_change {
-                let _ = sessions::bump_token_version(&mut conn, id);
-                let _ = sessions::revoke_all_for_user(&mut conn, id);
-            }
-            HttpResponse::Ok().json(ResponseStructure {
-                success: true,
-                code: 200,
-                message: String::from("success"),
-                data: Some(UserResponse {
+    let begin = conn.batch_execute("BEGIN IMMEDIATE");
+    let outcome = match begin {
+        Ok(()) => {
+            let result = (|| -> Result<UserResponse, String> {
+                diesel::update(rp_users::table.find(id))
+                    .set((
+                        rp_users::username.eq(&user.username),
+                        rp_users::password.eq(&user.password),
+                        rp_users::salt.eq(&user.salt),
+                        rp_users::authority.eq(&user.authority),
+                        rp_users::status.eq(user.status),
+                        rp_users::updated_at.eq(user.updated_at),
+                        rp_users::password_algo.eq(&user.password_algo),
+                        rp_users::must_change_password.eq(user.must_change_password),
+                    ))
+                    .execute(&mut *conn)
+                    .map_err(|err| format!("Failed to update user: {err}"))?;
+                rbac::assign_role_for_authority(&mut conn, id, &user.authority)?;
+                if revoke_sessions {
+                    if clear_must_change {
+                        sessions::bump_token_version(&mut conn, id)?;
+                    }
+                    sessions::revoke_all_for_user(&mut conn, id)?;
+                }
+                Ok(UserResponse {
                     id: user.id,
                     username: user.username.clone(),
                     authority: user.authority.clone(),
                     status: user.status,
                     created_at: user.created_at,
-                }),
-            })
+                })
+            })();
+            let _ = conn.batch_execute("COMMIT");
+            result
         }
-        Err(err) => map_diesel_error(err),
+        Err(err) => Err(format!("Failed to begin transaction: {err}")),
+    };
+
+    match outcome {
+        Ok(response) => HttpResponse::Ok().json(ResponseStructure {
+            success: true,
+            code: 200,
+            message: String::from("success"),
+            data: Some(response),
+        }),
+        Err(message) => HttpResponse::InternalServerError().json(ResponseStructureError {
+            success: false,
+            code: 500,
+            message,
+        }),
     }
 }
 
@@ -368,20 +385,64 @@ pub async fn delete_user(
         }
     };
 
-    match diesel::delete(rp_users::table.find(path.id)).execute(&mut *conn) {
-        Ok(0) => HttpResponse::NotFound().json(ResponseStructureError {
+    // Diesel's SQLite connections enforce foreign keys: remove the user's
+    // sessions and role rows first, all in one transaction, so the account
+    // and its access material disappear together.
+    let begin = conn.batch_execute("BEGIN IMMEDIATE");
+    let outcome = match begin {
+        Ok(()) => {
+            let result = (|| -> Result<(), String> {
+                sql_query("DELETE FROM sessions WHERE user_id = ?1")
+                    .bind::<BigInt, _>(i64::from(path.id))
+                    .execute(&mut *conn)
+                    .map_err(|err| format!("Failed to remove sessions: {err}"))?;
+                sql_query("DELETE FROM user_roles WHERE user_id = ?1")
+                    .bind::<BigInt, _>(i64::from(path.id))
+                    .execute(&mut *conn)
+                    .map_err(|err| format!("Failed to remove role rows: {err}"))?;
+                let deleted = diesel::delete(rp_users::table.find(path.id))
+                    .execute(&mut *conn)
+                    .map_err(|err| format!("Failed to delete user: {err}"))?;
+                if deleted == 0 {
+                    return Err("__NOT_FOUND__".to_string());
+                }
+                Ok(())
+            })();
+            match result {
+                Ok(()) => {
+                    let _ = conn.batch_execute("COMMIT");
+                    HttpResponse::Ok().json(ResponseStructure {
+                        success: true,
+                        code: 200,
+                        message: String::from("success"),
+                        data: None::<bool>,
+                    })
+                }
+                Err(message) if message == "__NOT_FOUND__" => {
+                    let _ = conn.batch_execute("ROLLBACK");
+                    HttpResponse::NotFound().json(ResponseStructureError {
+                        success: false,
+                        code: 404,
+                        message: String::from("User not found"),
+                    })
+                }
+                Err(message) => {
+                    let _ = conn.batch_execute("ROLLBACK");
+                    HttpResponse::InternalServerError().json(ResponseStructureError {
+                        success: false,
+                        code: 500,
+                        message,
+                    })
+                }
+            }
+        }
+        Err(message) => HttpResponse::InternalServerError().json(ResponseStructureError {
             success: false,
-            code: 404,
-            message: String::from("User not found"),
+            code: 500,
+            message: format!("Failed to begin transaction: {message}"),
         }),
-        Ok(_) => HttpResponse::Ok().json(ResponseStructure {
-            success: true,
-            code: 200,
-            message: String::from("success"),
-            data: None::<bool>,
-        }),
-        Err(err) => map_diesel_error(err),
-    }
+    };
+    outcome
 }
 
 pub async fn reset_password(
@@ -425,30 +486,47 @@ pub async fn reset_password(
     };
     let now = Utc::now().naive_utc();
 
-    match diesel::update(rp_users::table.find(path.id))
-        .set((
-            rp_users::password.eq(&hashed_password),
-            rp_users::salt.eq(""),
-            rp_users::password_algo.eq(ALGO_ARGON2ID),
-            rp_users::must_change_password.eq(1),
-            rp_users::updated_at.eq(now),
-        ))
-        .execute(&mut *conn)
-    {
-        Ok(_) => {
-            let _ = sessions::bump_token_version(&mut conn, path.id);
-            let _ = sessions::revoke_all_for_user(&mut conn, path.id);
-            HttpResponse::Ok().json(ResponseStructure {
-                success: true,
-                code: 200,
-                message: String::from("success"),
-                data: Some(ResetPasswordResponse {
+    // Password reset must atomically invalidate the old tokens; a reset that
+    // leaves old sessions alive is not a completed reset.
+    let begin = conn.batch_execute("BEGIN IMMEDIATE");
+    let outcome = match begin {
+        Ok(()) => {
+            let result = (|| -> Result<ResetPasswordResponse, String> {
+                diesel::update(rp_users::table.find(path.id))
+                    .set((
+                        rp_users::password.eq(&hashed_password),
+                        rp_users::salt.eq(""),
+                        rp_users::password_algo.eq(ALGO_ARGON2ID),
+                        rp_users::must_change_password.eq(1),
+                        rp_users::updated_at.eq(now),
+                    ))
+                    .execute(&mut *conn)
+                    .map_err(|err| format!("Failed to reset password: {err}"))?;
+                sessions::bump_token_version(&mut conn, path.id)?;
+                sessions::revoke_all_for_user(&mut conn, path.id)?;
+                Ok(ResetPasswordResponse {
                     id: user.id,
                     username: user.username,
                     new_password,
-                }),
-            })
+                })
+            })();
+            let _ = conn.batch_execute("COMMIT");
+            result
         }
-        Err(err) => map_diesel_error(err),
+        Err(err) => Err(format!("Failed to begin transaction: {err}")),
+    };
+
+    match outcome {
+        Ok(response) => HttpResponse::Ok().json(ResponseStructure {
+            success: true,
+            code: 200,
+            message: String::from("success"),
+            data: Some(response),
+        }),
+        Err(message) => HttpResponse::InternalServerError().json(ResponseStructureError {
+            success: false,
+            code: 500,
+            message,
+        }),
     }
 }
