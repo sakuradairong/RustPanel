@@ -1,8 +1,12 @@
+use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
 
 use bollard::container::LogOutput;
-use bollard::models::{ContainerCreateBody, PortSummaryTypeEnum};
+use bollard::models::{
+    ContainerCreateBody, HostConfig, PortBinding, PortSummaryTypeEnum, RestartPolicy,
+    RestartPolicyNameEnum,
+};
 use bollard::query_parameters::{
     CreateContainerOptions, ListContainersOptions, LogsOptions, RemoveContainerOptions,
     RestartContainerOptions, StartContainerOptions, StatsOptions, StopContainerOptions,
@@ -74,8 +78,9 @@ pub async fn list(all: bool) -> Result<Vec<ContainerInfo>, Box<dyn Error + Send 
             })
             .collect::<Vec<_>>();
 
+        // Normalize to lowercase so the UI can compare against "running"/"paused"/etc.
         let state_str = match c.state.as_ref() {
-            Some(s) => format!("{:?}", s),
+            Some(s) => format!("{:?}", s).to_lowercase(),
             None => String::new(),
         };
 
@@ -97,13 +102,87 @@ pub async fn create(
     name: &str,
     image: &str,
     cmd: Option<Vec<String>>,
+    ports: Vec<String>,
+    env: Vec<String>,
+    restart_policy: Option<String>,
+    network_mode: Option<String>,
 ) -> Result<String, Box<dyn Error + Send + Sync>> {
     let client = docker()?;
+
+    // Parse port mappings like "8080:80" or "8080:80/udp" (host:container[/proto]).
+    // Docker auto-exposes ports that appear in HostConfig.port_bindings.
+    let mut port_bindings: HashMap<String, Option<Vec<PortBinding>>> = HashMap::new();
+    for p in &ports {
+        let (mapping, proto) = match p.split_once('/') {
+            Some((m, pr)) => (m.trim(), pr.trim()),
+            None => (p.trim(), "tcp"),
+        };
+        if mapping.is_empty() {
+            continue;
+        }
+        let (host_port, container_port) = match mapping.split_once(':') {
+            Some((h, c)) => (h.trim().to_string(), c.trim().to_string()),
+            None => (mapping.to_string(), mapping.to_string()),
+        };
+        if container_port.is_empty() {
+            continue;
+        }
+        let key = format!("{}/{}", container_port, proto);
+        port_bindings.insert(
+            key,
+            Some(vec![PortBinding {
+                host_ip: Some("0.0.0.0".to_string()),
+                host_port: Some(host_port),
+            }]),
+        );
+    }
+
+    let restart = match restart_policy.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        Some("always") => Some(RestartPolicy {
+            name: Some(RestartPolicyNameEnum::ALWAYS),
+            maximum_retry_count: None,
+        }),
+        Some("unless-stopped") => Some(RestartPolicy {
+            name: Some(RestartPolicyNameEnum::UNLESS_STOPPED),
+            maximum_retry_count: None,
+        }),
+        Some("on-failure") => Some(RestartPolicy {
+            name: Some(RestartPolicyNameEnum::ON_FAILURE),
+            maximum_retry_count: Some(5),
+        }),
+        Some("no") => Some(RestartPolicy {
+            name: Some(RestartPolicyNameEnum::NO),
+            maximum_retry_count: None,
+        }),
+        _ => None,
+    };
+    let network = network_mode
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+
+    let host_config = if port_bindings.is_empty() && restart.is_none() && network.is_none() {
+        None
+    } else {
+        Some(HostConfig {
+            port_bindings: if port_bindings.is_empty() {
+                None
+            } else {
+                Some(port_bindings)
+            },
+            restart_policy: restart,
+            network_mode: network,
+            ..Default::default()
+        })
+    };
 
     let config = ContainerCreateBody {
         image: Some(image.to_string()),
         cmd: cmd.clone(),
         tty: Some(true),
+        env: if env.is_empty() { None } else { Some(env) },
+        host_config,
         ..Default::default()
     };
 
@@ -153,6 +232,103 @@ pub async fn unpause(container_id: &str) -> Result<(), Box<dyn Error + Send + Sy
     let client = docker()?;
     client.unpause_container(container_id).await?;
     Ok(())
+}
+
+/// Run a one-shot command inside a running container and return combined stdout/stderr.
+pub async fn exec(
+    container_id: &str,
+    cmd: Vec<String>,
+) -> Result<String, Box<dyn Error + Send + Sync>> {
+    use bollard::container::LogOutput;
+    use bollard::exec::{CreateExecOptions, StartExecOptions, StartExecResults};
+
+    if cmd.is_empty() {
+        return Err(Box::new(DockerContainerError {
+            message: "command is required".into(),
+        }));
+    }
+
+    let client = docker()?;
+    let created = client
+        .create_exec(
+            container_id,
+            CreateExecOptions {
+                attach_stdout: Some(true),
+                attach_stderr: Some(true),
+                cmd: Some(cmd),
+                ..Default::default()
+            },
+        )
+        .await?;
+
+    let results = client
+        .start_exec(&created.id, None::<StartExecOptions>)
+        .await?;
+
+    let mut output = String::new();
+    match results {
+        StartExecResults::Attached {
+            output: mut stream,
+            ..
+        } => {
+            while let Some(item) = stream.next().await {
+                match item {
+                    Ok(LogOutput::StdOut { message })
+                    | Ok(LogOutput::StdErr { message })
+                    | Ok(LogOutput::Console { message }) => {
+                        output.push_str(&String::from_utf8_lossy(&message));
+                    }
+                    Ok(LogOutput::StdIn { .. }) => {}
+                    Err(e) => return Err(Box::new(e)),
+                }
+            }
+        }
+        StartExecResults::Detached => {}
+    }
+
+    Ok(output)
+}
+
+/// Start an interactive TTY exec session (stdin + stdout). Caller bridges I/O.
+pub async fn exec_interactive(
+    container_id: &str,
+    cmd: Vec<String>,
+) -> Result<bollard::exec::StartExecResults, Box<dyn Error + Send + Sync>> {
+    use bollard::exec::{CreateExecOptions, StartExecOptions};
+
+    if cmd.is_empty() {
+        return Err(Box::new(DockerContainerError {
+            message: "command is required".into(),
+        }));
+    }
+
+    let client = docker()?;
+    let created = client
+        .create_exec(
+            container_id,
+            CreateExecOptions {
+                attach_stdin: Some(true),
+                attach_stdout: Some(true),
+                attach_stderr: Some(true),
+                tty: Some(true),
+                cmd: Some(cmd),
+                ..Default::default()
+            },
+        )
+        .await?;
+
+    let results = client
+        .start_exec(
+            &created.id,
+            Some(StartExecOptions {
+                detach: false,
+                tty: true,
+                output_capacity: Some(1024 * 64),
+            }),
+        )
+        .await?;
+
+    Ok(results)
 }
 
 pub async fn logs(

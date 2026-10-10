@@ -24,6 +24,13 @@ pub struct CreateContainerBody {
     pub name: String,
     pub image: String,
     pub cmd: Option<Vec<String>>,
+    /// Port mappings like "8080:80" or "8080:80/udp".
+    pub ports: Option<Vec<String>>,
+    /// Environment entries like "KEY=value".
+    pub env: Option<Vec<String>>,
+    /// "no" | "always" | "unless-stopped" | "on-failure".
+    pub restart_policy: Option<String>,
+    pub network_mode: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -59,6 +66,18 @@ pub struct NetworkConnectBody {
 #[derive(Deserialize)]
 pub struct PullImageBody {
     pub image: String,
+}
+
+#[derive(Deserialize)]
+pub struct PruneImagesBody {
+    /// When true, only prune dangling images (default true).
+    pub dangling_only: Option<bool>,
+}
+
+#[derive(Deserialize)]
+pub struct ExecContainerBody {
+    /// Shell command string, e.g. `ls -la /`. Runs via `/bin/sh -c`.
+    pub cmd: String,
 }
 
 pub async fn list_images(user: AuthUser, pool: web::Data<DBPool>) -> HttpResponse {
@@ -160,7 +179,17 @@ pub async fn create_container(user: AuthUser, pool: web::Data<DBPool>, body: web
     if let Err(err) = rbac::require_perm(pool.get_ref(), &user, PERM_DOCKER_WRITE) {
         return err.error_response();
     }
-    match container::create(&body.name, &body.image, body.cmd.clone()).await {
+    match container::create(
+        &body.name,
+        &body.image,
+        body.cmd.clone(),
+        body.ports.clone().unwrap_or_default(),
+        body.env.clone().unwrap_or_default(),
+        body.restart_policy.clone(),
+        body.network_mode.clone(),
+    )
+    .await
+    {
         Ok(id) => HttpResponse::Ok().json(ResponseStructure {
             success: true, code: 200, message: String::from("success"),
             data: Some(serde_json::json!({"container_id": id})),
@@ -254,6 +283,71 @@ pub async fn unpause_container(user: AuthUser, pool: web::Data<DBPool>, path: we
         Ok(_) => HttpResponse::Ok().json(ResponseStructure {
             success: true, code: 200, message: String::from("success"),
             data: Some("ok"),
+        }),
+        Err(err) => HttpResponse::InternalServerError().json(ResponseStructureError {
+            success: false, code: 500, message: err.to_string(),
+        }),
+    }
+}
+
+/// Prune unused images (default: dangling only). Docker-write operation.
+pub async fn prune_images(user: AuthUser, pool: web::Data<DBPool>, body: web::Json<PruneImagesBody>) -> HttpResponse {
+    if let Err(err) = rbac::require_perm(pool.get_ref(), &user, PERM_DOCKER_WRITE) {
+        return err.error_response();
+    }
+    let dangling_only = body.dangling_only.unwrap_or(true);
+    match image::prune(dangling_only).await {
+        Ok(result) => HttpResponse::Ok().json(ResponseStructure {
+            success: true, code: 200, message: String::from("success"),
+            data: Some(result),
+        }),
+        Err(err) => HttpResponse::InternalServerError().json(ResponseStructureError {
+            success: false, code: 500, message: err.to_string(),
+        }),
+    }
+}
+
+/// Prune unused volumes. Docker-write operation; volumes with container
+/// owners are never removed by the Docker API itself.
+pub async fn prune_volumes(user: AuthUser, pool: web::Data<DBPool>) -> HttpResponse {
+    if let Err(err) = rbac::require_perm(pool.get_ref(), &user, PERM_DOCKER_WRITE) {
+        return err.error_response();
+    }
+    match volume::prune().await {
+        Ok(result) => HttpResponse::Ok().json(ResponseStructure {
+            success: true, code: 200, message: String::from("success"),
+            data: Some(result),
+        }),
+        Err(err) => HttpResponse::InternalServerError().json(ResponseStructureError {
+            success: false, code: 500, message: err.to_string(),
+        }),
+    }
+}
+
+/// One-shot command execution inside a container via `/bin/sh -c`.
+/// This is arbitrary-command-execution by design, so it stays behind
+/// docker:write; interactive terminal + audit wiring arrive with RP-35.
+pub async fn exec_container(
+    user: AuthUser,
+    pool: web::Data<DBPool>,
+    path: web::Path<ContainerIdPath>,
+    body: web::Json<ExecContainerBody>,
+) -> HttpResponse {
+    if let Err(err) = rbac::require_perm(pool.get_ref(), &user, PERM_DOCKER_WRITE) {
+        return err.error_response();
+    }
+    let cmd = body.cmd.trim();
+    if cmd.is_empty() {
+        return HttpResponse::BadRequest().json(ResponseStructureError {
+            success: false, code: 400,
+            message: String::from("cmd is required"),
+        });
+    }
+    let argv = vec![String::from("/bin/sh"), String::from("-c"), cmd.to_string()];
+    match container::exec(&path.id, argv).await {
+        Ok(output) => HttpResponse::Ok().json(ResponseStructure {
+            success: true, code: 200, message: String::from("success"),
+            data: Some(serde_json::json!({"output": output})),
         }),
         Err(err) => HttpResponse::InternalServerError().json(ResponseStructureError {
             success: false, code: 500, message: err.to_string(),

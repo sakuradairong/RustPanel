@@ -75,3 +75,33 @@ pub async fn inspect(volume_name: &str) -> Result<VolumeInfo, Box<dyn Error + Se
         size: v.usage_data.as_ref().map(|u| u.size).unwrap_or(0),
     })
 }
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct PruneResult {
+    pub deleted: usize,
+    pub space_reclaimed: i64,
+}
+
+/// Remove unused volumes (including named volumes not attached to any container).
+pub async fn prune() -> Result<PruneResult, Box<dyn Error + Send + Sync>> {
+    use bollard::query_parameters::PruneVolumesOptionsBuilder;
+    use std::collections::HashMap;
+
+    let docker = docker()?;
+    // Docker's default prune only drops anonymous volumes; `all=true` matches
+    // `docker volume prune -a` and removes unused named volumes too.
+    let mut filters = HashMap::new();
+    filters.insert("all", vec!["true"]);
+    let options = PruneVolumesOptionsBuilder::default()
+        .filters(&filters)
+        .build();
+    let resp = docker.prune_volumes(Some(options)).await?;
+    Ok(PruneResult {
+        deleted: resp
+            .volumes_deleted
+            .as_ref()
+            .map(|v| v.len())
+            .unwrap_or(0),
+        space_reclaimed: resp.space_reclaimed.unwrap_or(0),
+    })
+}
