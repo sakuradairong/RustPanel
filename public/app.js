@@ -288,13 +288,20 @@ async function renderDashboard(){
     let prevNet={};
     nets.forEach(n=>{prevNet[n.name]={rx:n.total_received||0,tx:n.total_transmitted||0}});
 
-    // Open SSE via one-time ticket (JWT must not appear in the EventSource URL)
-    const ticketResp=await api('/monitor/tickets',{method:'POST',body:JSON.stringify({stream:'monitor'})});
-    const ticket=ticketResp&&ticketResp.data&&ticketResp.data.ticket;
-    if(!ticket)throw new Error('Failed to obtain SSE ticket');
-    dashboardEventSource = new EventSource('/api/v1/monitor?ticket='+encodeURIComponent(ticket));
-    dashboardEventSource.onmessage=function(ev){
-      try{
+    // Open SSE via one-time ticket (JWT must not appear in the EventSource URL).
+    // The ticket is single-use, so EventSource auto-reconnect would replay a
+    // dead ticket forever: on error we close and reconnect with a fresh
+    // ticket, backing off up to ~30s and stopping after repeated failures.
+    let sseRetries=0;
+    const openStream=async()=>{
+      const ticketResp=await api('/monitor/tickets',{method:'POST',body:JSON.stringify({stream:'monitor'})});
+      const ticket=ticketResp&&ticketResp.data&&ticketResp.data.ticket;
+      if(!ticket)throw new Error('Failed to obtain SSE ticket');
+      const es=new EventSource('/api/v1/monitor?ticket='+encodeURIComponent(ticket));
+      dashboardEventSource=es;
+      es.onmessage=function(ev){
+        sseRetries=0;
+        try{
         const s=JSON.parse(ev.data);
         const cpuGlobal=s.cpu||0;
         const memUsed=s.memory?s.memory.used:0;
@@ -358,8 +365,18 @@ async function renderDashboard(){
           });
         }
       }catch(e){/* ignore parse errors */ }
+      };
+      es.onerror=function(){
+        // One-time ticket is consumed: reconnect needs a fresh ticket.
+        es.close();
+        if(dashboardEventSource===es)dashboardEventSource=null;
+        if(sseRetries>=8)return;
+        sseRetries++;
+        const wait=Math.min(30000,1000*Math.pow(2,sseRetries-1));
+        setTimeout(()=>{openStream().catch(()=>{});},wait);
+      };
     };
-    dashboardEventSource.onerror=function(){/* SSE connection will auto-reconnect */};
+    await openStream();
   }catch(e){
     if(e.message!=='Unauthorized')document.getElementById('ds-cpu-cores').textContent='Error: '+e.message;
   }
