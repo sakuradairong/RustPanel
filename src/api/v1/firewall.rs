@@ -7,10 +7,12 @@
  * @FilePath: \RustPanel\src\api\v1\firewall.rs
  */
 
-use actix_web::{web, HttpResponse};
+use actix_web::{web, HttpResponse, ResponseError};
 use serde::{Deserialize, Serialize};
 use crate::api::auth::AuthUser;
 use crate::api::{ResponseStructure, ResponseStructureError};
+use crate::service::db::DBPool;
+use crate::service::rbac::{self, PERM_FIREWALL_READ, PERM_FIREWALL_WRITE};
 use tokio::process::Command;
 
 // ── Response types ──
@@ -124,7 +126,10 @@ fn output_response(out: std::process::Output) -> HttpResponse {
 
 // ── Handlers ──
 
-pub async fn get_firewall_status(_: AuthUser) -> HttpResponse {
+pub async fn get_firewall_status(user: AuthUser, pool: web::Data<DBPool>) -> HttpResponse {
+    if let Err(err) = rbac::require_perm(pool.get_ref(), &user, PERM_FIREWALL_READ) {
+        return err.error_response();
+    }
     let iptables_available = match Command::new("iptables")
         .args(["-L", "-n", "--line-numbers"])
         .output()
@@ -163,7 +168,10 @@ pub async fn get_firewall_status(_: AuthUser) -> HttpResponse {
     })
 }
 
-pub async fn list_iptables_rules(_: AuthUser) -> HttpResponse {
+pub async fn list_iptables_rules(user: AuthUser, pool: web::Data<DBPool>) -> HttpResponse {
+    if let Err(err) = rbac::require_perm(pool.get_ref(), &user, PERM_FIREWALL_READ) {
+        return err.error_response();
+    }
     match Command::new("iptables")
         .args(["-L", "-n", "--line-numbers"])
         .output()
@@ -197,9 +205,13 @@ pub async fn list_iptables_rules(_: AuthUser) -> HttpResponse {
 }
 
 pub async fn add_iptables_rule(
-    _: AuthUser,
+    user: AuthUser,
+    pool: web::Data<DBPool>,
     body: web::Json<AddRuleBody>,
 ) -> HttpResponse {
+    if let Err(err) = rbac::require_perm(pool.get_ref(), &user, PERM_FIREWALL_WRITE) {
+        return err.error_response();
+    }
     let mut cmd = Command::new("iptables");
     cmd.arg("-A").arg(&body.chain);
     for part in body.rule.split_whitespace() {
@@ -217,10 +229,14 @@ pub async fn add_iptables_rule(
 }
 
 pub async fn delete_iptables_rule(
-    _: AuthUser,
+    user: AuthUser,
+    pool: web::Data<DBPool>,
     path: web::Path<DeleteRulePath>,
     query: web::Query<DeleteRuleQuery>,
 ) -> HttpResponse {
+    if let Err(err) = rbac::require_perm(pool.get_ref(), &user, PERM_FIREWALL_WRITE) {
+        return err.error_response();
+    }
     match Command::new("iptables")
         .args(["-D", &path.chain, &query.num.to_string()])
         .output()
@@ -252,9 +268,13 @@ pub async fn delete_iptables_rule(
 }
 
 pub async fn enable_port(
-    _: AuthUser,
+    user: AuthUser,
+    pool: web::Data<DBPool>,
     body: web::Json<PortActionBody>,
 ) -> HttpResponse {
+    if let Err(err) = rbac::require_perm(pool.get_ref(), &user, PERM_FIREWALL_WRITE) {
+        return err.error_response();
+    }
     let protocol = body.protocol.as_deref().unwrap_or("tcp");
     let action = body.action.as_deref().unwrap_or("ACCEPT");
 

@@ -81,6 +81,25 @@ fn seed_initial_admin_if_empty(pool: &DBPool) -> Result<Option<BootstrapAdmin>, 
         .execute(&mut *conn)
         .map_err(|err| MigrationError::new(format!("Failed to create initial admin user: {err}")))?;
 
+    // Fetch the new id and attach the admin role (migration seed only covers pre-existing rows).
+    #[derive(diesel::QueryableByName)]
+    struct IdRow {
+        #[diesel(sql_type = diesel::sql_types::BigInt)]
+        id: i64,
+    }
+    let rows: Vec<IdRow> = diesel::sql_query(
+        "SELECT id FROM rp_users WHERE username = ?1 LIMIT 1",
+    )
+    .bind::<diesel::sql_types::Text, _>(&username)
+    .load(&mut *conn)
+    .map_err(|err| MigrationError::new(format!("Failed to load bootstrap admin id: {err}")))?;
+    let user_id = rows
+        .first()
+        .map(|row| row.id as i32)
+        .ok_or_else(|| MigrationError::new("Bootstrap admin row missing after insert"))?;
+    crate::service::rbac::assign_role_for_authority(&mut conn, user_id, "admin")
+        .map_err(MigrationError::new)?;
+
     fs::File::create("./panel.lock").map_err(|err| {
         MigrationError::new(format!("Failed to write panel.lock after bootstrap: {err}"))
     })?;

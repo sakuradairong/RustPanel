@@ -7,13 +7,21 @@
  * @FilePath: \RustPanel\src\api\v1\webserver.rs
  */
 
-use actix_web::{web, HttpResponse};
+use actix_web::{web, HttpResponse, ResponseError};
 use serde::{Deserialize, Serialize};
 use tokio::fs;
 use tokio::process::Command;
 
 use crate::api::auth::AuthUser;
 use crate::api::{ResponseStructure, ResponseStructureError};
+use crate::service::db::DBPool;
+use crate::service::rbac::{self, PERM_SITE_WRITE};
+
+fn deny_without_site_write(user: &AuthUser, pool: &DBPool) -> Option<HttpResponse> {
+    rbac::require_perm(pool, user, PERM_SITE_WRITE)
+        .err()
+        .map(|err| err.error_response())
+}
 
 #[derive(Deserialize)]
 pub struct NginxSitePath {
@@ -355,9 +363,13 @@ async fn parse_nginx_config(path: &std::path::Path) -> (Option<String>, Option<S
 }
 
 pub async fn create_nginx_site(
-    _: AuthUser,
+    user: AuthUser,
+    pool: web::Data<DBPool>,
     body: web::Json<CreateSiteBody>,
 ) -> HttpResponse {
+    if let Some(response) = deny_without_site_write(&user, pool.get_ref()) {
+        return response;
+    }
     if !is_linux() {
         return HttpResponse::BadRequest().json(ResponseStructureError {
             success: false,
@@ -508,9 +520,13 @@ pub async fn create_nginx_site(
 }
 
 pub async fn delete_nginx_site(
-    _: AuthUser,
+    user: AuthUser,
+    pool: web::Data<DBPool>,
     path: web::Path<NginxSitePath>,
 ) -> HttpResponse {
+    if let Some(response) = deny_without_site_write(&user, pool.get_ref()) {
+        return response;
+    }
     if !is_linux() {
         return HttpResponse::BadRequest().json(ResponseStructureError {
             success: false,
@@ -610,9 +626,13 @@ pub async fn delete_nginx_site(
 }
 
 pub async fn enable_nginx_site(
-    _: AuthUser,
+    user: AuthUser,
+    pool: web::Data<DBPool>,
     path: web::Path<NginxSitePath>,
 ) -> HttpResponse {
+    if let Some(response) = deny_without_site_write(&user, pool.get_ref()) {
+        return response;
+    }
     if !is_linux() {
         return HttpResponse::BadRequest().json(ResponseStructureError {
             success: false,
@@ -683,9 +703,13 @@ pub async fn enable_nginx_site(
 }
 
 pub async fn disable_nginx_site(
-    _: AuthUser,
+    user: AuthUser,
+    pool: web::Data<DBPool>,
     path: web::Path<NginxSitePath>,
 ) -> HttpResponse {
+    if let Some(response) = deny_without_site_write(&user, pool.get_ref()) {
+        return response;
+    }
     if !is_linux() {
         return HttpResponse::BadRequest().json(ResponseStructureError {
             success: false,
@@ -734,7 +758,10 @@ pub async fn disable_nginx_site(
     })
 }
 
-pub async fn reload_nginx(_: AuthUser) -> HttpResponse {
+pub async fn reload_nginx(user: AuthUser, pool: web::Data<DBPool>) -> HttpResponse {
+    if let Some(response) = deny_without_site_write(&user, pool.get_ref()) {
+        return response;
+    }
     if !is_linux() {
         return HttpResponse::BadRequest().json(ResponseStructureError {
             success: false,

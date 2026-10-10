@@ -1,9 +1,13 @@
 use actix_web::{web, HttpResponse};
 use serde::{Deserialize, Serialize};
 
+use actix_web::ResponseError;
+
 use crate::api::auth::AuthUser;
 use crate::api::{ResponseStructure, ResponseStructureError};
 use crate::models::system::installer::{self, SoftwareType};
+use crate::service::db::DBPool;
+use crate::service::rbac::{self, PERM_APP_INSTALL, PERM_APP_READ, PERM_APP_UNINSTALL};
 
 #[derive(Serialize)]
 struct SoftwareInfo {
@@ -12,7 +16,10 @@ struct SoftwareInfo {
     versions_available: bool,
 }
 
-pub async fn list_software(_: AuthUser) -> HttpResponse {
+pub async fn list_software(user: AuthUser, pool: web::Data<DBPool>) -> HttpResponse {
+    if let Err(err) = rbac::require_perm(pool.get_ref(), &user, PERM_APP_READ) {
+        return err.error_response();
+    }
     let software = vec![
         SoftwareInfo {
             name: String::from("nginx"),
@@ -65,7 +72,14 @@ pub struct InstallBody {
     pub version: Option<String>,
 }
 
-pub async fn install_software(_: AuthUser, body: web::Json<InstallBody>) -> HttpResponse {
+pub async fn install_software(
+    user: AuthUser,
+    pool: web::Data<DBPool>,
+    body: web::Json<InstallBody>,
+) -> HttpResponse {
+    if let Err(err) = rbac::require_perm(pool.get_ref(), &user, PERM_APP_INSTALL) {
+        return err.error_response();
+    }
     let software_type = match body.software.to_lowercase().as_str() {
         "nginx" => SoftwareType::Nginx,
         "apache" => SoftwareType::Apache,
@@ -118,7 +132,14 @@ pub struct UninstallBody {
     pub software: String,
 }
 
-pub async fn uninstall_software(_: AuthUser, body: web::Json<UninstallBody>) -> HttpResponse {
+pub async fn uninstall_software(
+    user: AuthUser,
+    pool: web::Data<DBPool>,
+    body: web::Json<UninstallBody>,
+) -> HttpResponse {
+    if let Err(err) = rbac::require_perm(pool.get_ref(), &user, PERM_APP_UNINSTALL) {
+        return err.error_response();
+    }
     let software_type = match body.software.to_lowercase().as_str() {
         "nginx" => SoftwareType::Nginx,
         "apache" => SoftwareType::Apache,

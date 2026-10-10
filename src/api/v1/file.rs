@@ -1,8 +1,10 @@
 use crate::api::auth::AuthUser;
 use crate::api::{ResponseStructure, ResponseStructureError};
 use crate::models::file::{self, SaveData};
+use crate::service::db::DBPool;
+use crate::service::rbac::{self, PERM_FILE_READ, PERM_FILE_WRITE};
 
-use actix_web::{web, HttpResponse};
+use actix_web::{web, HttpResponse, ResponseError};
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -13,7 +15,10 @@ pub struct ListData {
     pub page_size: i32,
 }
 
-pub async fn list(_: AuthUser, data: web::Query<ListData>) -> HttpResponse {
+pub async fn list(user: AuthUser, pool: web::Data<DBPool>, data: web::Query<ListData>) -> HttpResponse {
+    if let Err(err) = rbac::require_perm(pool.get_ref(), &user, PERM_FILE_READ) {
+        return err.error_response();
+    }
     // Security: reject paths containing ".." to prevent directory traversal
     if data.path.contains("..") {
         return HttpResponse::BadRequest().json(ResponseStructureError {
@@ -30,7 +35,10 @@ pub async fn list(_: AuthUser, data: web::Query<ListData>) -> HttpResponse {
     })
 }
 
-pub async fn save(_: AuthUser, data: web::Json<SaveData>) -> HttpResponse {
+pub async fn save(user: AuthUser, pool: web::Data<DBPool>, data: web::Json<SaveData>) -> HttpResponse {
+    if let Err(err) = rbac::require_perm(pool.get_ref(), &user, PERM_FILE_WRITE) {
+        return err.error_response();
+    }
     // Security: reject paths containing ".." to prevent directory traversal
     if data.path.contains("..") {
         return HttpResponse::BadRequest().json(ResponseStructureError {
@@ -59,7 +67,14 @@ pub struct ContentData {
     pub path: String,
 }
 
-pub async fn content(_: AuthUser, data: web::Query<ContentData>) -> HttpResponse {
+pub async fn content(
+    user: AuthUser,
+    pool: web::Data<DBPool>,
+    data: web::Query<ContentData>,
+) -> HttpResponse {
+    if let Err(err) = rbac::require_perm(pool.get_ref(), &user, PERM_FILE_READ) {
+        return err.error_response();
+    }
     // Security: reject paths containing ".." to prevent directory traversal
     if data.path.contains("..") {
         return HttpResponse::BadRequest().json(ResponseStructureError {

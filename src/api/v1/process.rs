@@ -1,9 +1,11 @@
-use actix_web::{web, HttpResponse};
+use actix_web::{web, HttpResponse, ResponseError};
 use serde::{Deserialize, Serialize};
 use sysinfo::System;
 
 use crate::api::auth::AuthUser;
 use crate::api::{ResponseStructure, ResponseStructureError};
+use crate::service::db::DBPool;
+use crate::service::rbac::{self, PERM_PROCESS_READ, PERM_PROCESS_WRITE};
 
 #[derive(Deserialize)]
 pub struct ListProcessesQuery {
@@ -25,7 +27,10 @@ pub struct KillProcessPath {
     pub pid: i32,
 }
 
-pub async fn list_processes(_: AuthUser, query: web::Query<ListProcessesQuery>) -> HttpResponse {
+pub async fn list_processes(user: AuthUser, pool: web::Data<DBPool>, query: web::Query<ListProcessesQuery>) -> HttpResponse {
+    if let Err(err) = rbac::require_perm(pool.get_ref(), &user, PERM_PROCESS_READ) {
+        return err.error_response();
+    }
     let keyword = query.keyword.as_ref().map(|k| k.to_lowercase());
     let mut sys = System::new_all();
 
@@ -64,7 +69,10 @@ pub async fn list_processes(_: AuthUser, query: web::Query<ListProcessesQuery>) 
     })
 }
 
-pub async fn kill_process(_: AuthUser, path: web::Path<KillProcessPath>) -> HttpResponse {
+pub async fn kill_process(user: AuthUser, pool: web::Data<DBPool>, path: web::Path<KillProcessPath>) -> HttpResponse {
+    if let Err(err) = rbac::require_perm(pool.get_ref(), &user, PERM_PROCESS_WRITE) {
+        return err.error_response();
+    }
     let pid = path.pid;
 
     match std::process::Command::new("kill")
