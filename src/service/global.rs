@@ -19,6 +19,9 @@ lazy_static! {
     pub static ref SESSION_KEY: Vec<u8> = SECURITY_KEYS
         .as_ref().expect("Security keys must be validated before serving requests")
         .session.clone();
+    /// RP-08 master key (KEK). Missing/invalid values refuse panel startup.
+    pub static ref MASTER_KEY: Result<crate::secrets::MasterKey, String> =
+        crate::secrets::MasterKey::from_environment();
 }
 
 

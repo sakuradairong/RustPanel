@@ -34,7 +34,7 @@
 
 要点：
 
-- Schema 期望版本：RP-23=**3**，RP-03=**4**，RP-09=**5**，RP-05=**6**。
+- Schema 期望版本：RP-23=**3**，RP-03=**4**，RP-09=**5**，RP-05=**6**，RP-08=**7**。
 - 旧版把 password 哈希放进 JWT `sub` 的令牌不再被接受，用户需重新登录。
 - 访问令牌不再包含口令字段。
 
@@ -116,11 +116,19 @@
 - 本地验证：`cargo deny check --deny warnings` → advisories/bans/licenses/sources 均 ok。
 - 既有 `cargo test --locked` / `--locked` build 门禁保留。
 
+## 第十二批：RP-08 秘密信封加密
+
+| 任务 | 状态 | 本次实现 | 后续边界 |
+| --- | --- | --- | --- |
+| RP-08 DEK/KEK secrets | 已实现并验证（存储原语） | 迁移 `007_secrets`：`secret_keys`/`secrets`；AES-256-GCM 信封（随机 DEK + KEK wrap）；`RP_MASTER_KEY`（64 hex）或 `RP_MASTER_KEY_FILE`/`/etc/rustpanel/master.key`；缺 KEK 拒启；put/get/rewrap；离线 DB 无明文单测 | 业务面（DB/ACME/S3）全面改走 `secret_ref`、备份导出与 KEK 演练 UI、API token 不可逆 hash 表属后续 |
+
+要点：`cargo test --locked` **73** 通过（53 库 + 20 集成）；schema 期望版本 **7**。
+
 ## 接下来
 
-1. RP-08 秘密存储（DEK/KEK 信封加密）。
-2. RP-07 后续：socket runner / 降权部署。
-3. RP-23 增强：refresh 轮换与会话过期清理任务。
-4. RP-11 后续：SBOM、签名、依赖重复版本收紧。
+1. RP-07 后续：socket runner / 降权部署。
+2. RP-23 增强：refresh 轮换与会话过期清理任务。
+3. RP-11 后续：SBOM、签名、依赖重复版本收紧；rust-crypto/reqwest 升级后撤销 deny ignore。
+4. 将 DB/ACME/S3 凭证接入 RP-08 `secrets` 表。
 
 未完成全部 M0 前，不把已落地修复称为“生产安全已完成”。

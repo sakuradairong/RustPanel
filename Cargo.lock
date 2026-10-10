@@ -2692,6 +2692,7 @@ dependencies = [
  "actix-service",
  "actix-session",
  "actix-web",
+ "aes-gcm",
  "argon2",
  "base64 0.22.1",
  "bollard",
