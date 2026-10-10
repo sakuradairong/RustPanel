@@ -58,6 +58,8 @@ pub async fn os_info(_: AuthUser) -> HttpResponse {
         }))
     }
 
+    let load = System::load_average();
+
     HttpResponse::Ok().json(Some(ResponseStructure {
         success: true,
         code: 200,
@@ -73,6 +75,11 @@ pub async fn os_info(_: AuthUser) -> HttpResponse {
                 "used":sys.used_memory()/1048576,
             },
             "cpu":cpu_info,
+            "load":{
+                "one":load.one,
+                "five":load.five,
+                "fifteen":load.fifteen,
+            },
             "disk":disk_info,
             "network":network_info
         })),
