@@ -1,0 +1,57 @@
+# RP-11: cargo-deny supply-chain gate (licenses / advisories / bans / sources).
+# Advisory ignores are time-boxed follow-ups (legacy rust-crypto / reqwest 0.11 tree).
+
+[graph]
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+]
+all-features = false
+
+[output]
+feature-depth = 1
+
+[advisories]
+yanked = "deny"
+# Tracked follow-ups: replace rust-crypto (crypto cleanup), bump reqwest/h2.
+ignore = [
+    { id = "RUSTSEC-2016-0005", reason = "rust-crypto unmaintained; migration tracked after M0 auth stack (used for legacy SHA helpers)" },
+    { id = "RUSTSEC-2022-0011", reason = "rust-crypto AES advisory; panel password path uses argon2, not this AES" },
+    { id = "RUSTSEC-2022-0004", reason = "rustc-serialize via rust-crypto; not used for untrusted JSON ingest" },
+    { id = "RUSTSEC-2025-0025", reason = "rustc-serialize unmaintained via rust-crypto; same removal track" },
+    { id = "RUSTSEC-2020-0071", reason = "time 0.1 via rust-crypto; not calling local-offset APIs from panel code" },
+    { id = "RUSTSEC-2025-0121", reason = "gcc crate unmaintained transitive build dep" },
+    { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile via reqwest 0.11; bump reqwest in follow-up" },
+    { id = "RUSTSEC-2026-0258", reason = "h2 via reqwest 0.11; bump HTTP stack in follow-up" },
+]
+
+[licenses]
+version = 2
+confidence-threshold = 0.8
+# Exact set from `cargo deny list` on this lockfile; unused allowances warn under --deny warnings.
+allow = [
+    "0BSD",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "MIT",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+
+[bans]
+# Many duplicates come from rust-crypto + reqwest 0.11; keep allow until those trees are removed.
+# Revisit to "warn"/"deny" after crypto/HTTP stack cleanup.
+multiple-versions = "allow"
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

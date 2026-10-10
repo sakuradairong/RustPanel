@@ -8,12 +8,11 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_DENY_VERSION: "0.20.2"
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
-
     steps:
     - uses: actions/checkout@v4
     - uses: dtolnay/rust-toolchain@1.88.0
@@ -21,3 +20,13 @@ jobs:
       run: cargo build --locked --verbose
     - name: Run tests
       run: cargo test --locked --verbose
+
+  supply-chain:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@1.88.0
+    - name: Install cargo-deny
+      run: cargo install cargo-deny --locked --version "${CARGO_DENY_VERSION}"
+    - name: cargo deny check
+      run: cargo deny check --deny warnings

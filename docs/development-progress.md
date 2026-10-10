@@ -10,7 +10,7 @@
 | RP-02 fail-closed / 禁用检查 | 已实现并验证 | 查询错误/池耗尽返回 503；禁用/不存在/改密拒绝；以 DB 角色授权 | 见 RP-23 会话撤销 |
 | RP-25 消除公开密钥默认回退 | 已实现并验证 | 强制独立环境变量、长度/空白/旧默认值校验；监听前拒启 | 实例自动生成/受限文件加载和完整轮换仍需 bootstrap 扩展 |
 | RP-05 SSE 一次性票据 | 已实现并验证（见第九批） | 建连认证复用 DB；一次性票据/禁 query JWT/周期撤销见第九批 | — |
-| RP-11 可复现依赖 | 部分 | 提交 Cargo.lock；约束 sysinfo/bollard；声明 Rust 1.88，CI --locked | 漏洞/许可扫描、SBOM、签名和双架构仍待实施 |
+| RP-11 可复现依赖 | 部分→本批补齐 deny 门禁 | 提交 Cargo.lock；Rust 1.88；CI `--locked`；`deny.toml` + CI `cargo deny check --deny warnings`（见第十一批） | SBOM、产物签名和双架构属 RP-16 / 后续 |
 
 兼容变更和部署步骤见[安全密钥配置](security-bootstrap.md)。
 
@@ -105,10 +105,22 @@
 
 要点：测试累计 **63** 通过（44 库 + 19 集成）。
 
+## 第十一批：RP-11 供应链门禁
+
+| 任务 | 状态 | 本次实现 | 后续边界 |
+| --- | --- | --- | --- |
+| RP-11 依赖锁定与 cargo-deny | 已实现并验证（deny 门禁） | `deny.toml`：许可白名单、advisory 有期限忽略（rust-crypto / reqwest 0.11 树）、sources 仅 crates.io；CI `supply-chain` 任务固定 `cargo-deny` 0.20.2 并 `cargo deny check --deny warnings`；包 `license` 修正为 SPDX `Apache-2.0` | SBOM/签名/双架构属 RP-16；`multiple-versions=allow` 待 crypto/HTTP 栈清理后收紧；rust-crypto/reqwest 升级后撤销 advisory ignore |
+
+要点：
+
+- 本地验证：`cargo deny check --deny warnings` → advisories/bans/licenses/sources 均 ok。
+- 既有 `cargo test --locked` / `--locked` build 门禁保留。
+
 ## 接下来
 
-1. RP-11 audit/deny/SBOM；RP-08 秘密存储。
+1. RP-08 秘密存储（DEK/KEK 信封加密）。
 2. RP-07 后续：socket runner / 降权部署。
 3. RP-23 增强：refresh 轮换与会话过期清理任务。
+4. RP-11 后续：SBOM、签名、依赖重复版本收紧。
 
 未完成全部 M0 前，不把已落地修复称为“生产安全已完成”。
