@@ -7,12 +7,14 @@
  * @FilePath: \RustPanel\src\api\v1\service.rs
  */
 
-use actix_web::{web, HttpResponse};
+use actix_web::{web, HttpResponse, ResponseError};
 use serde::{Deserialize, Serialize};
-use tokio::process::Command;
 
 use crate::api::auth::AuthUser;
 use crate::api::{ResponseStructure, ResponseStructureError};
+use crate::privileged::{self, Action, SystemctlVerb};
+use crate::service::db::DBPool;
+use crate::service::rbac::{self, PERM_SERVICE_WRITE};
 
 #[derive(Deserialize)]
 pub struct ServiceNamePath {
@@ -32,7 +34,19 @@ fn is_linux() -> bool {
     cfg!(target_os = "linux")
 }
 
-pub async fn list_services(_: AuthUser) -> HttpResponse {
+fn runner_error_response(err: privileged::RunnerError) -> HttpResponse {
+    if err.is_rejected() {
+        ResponseStructureError::forbidden(&err.message())
+    } else {
+        HttpResponse::InternalServerError().json(ResponseStructureError {
+            success: false,
+            code: 500,
+            message: err.message(),
+        })
+    }
+}
+
+pub async fn list_services(user: AuthUser, _pool: web::Data<DBPool>) -> HttpResponse {
     if !is_linux() {
         return HttpResponse::BadRequest().json(ResponseStructureError {
             success: false,
@@ -41,20 +55,18 @@ pub async fn list_services(_: AuthUser) -> HttpResponse {
         });
     }
 
-    let output = Command::new("systemctl")
-        .args([
-            "list-units",
-            "--type=service",
-            "--no-pager",
-            "--no-legend",
-        ])
-        .output()
-        .await;
-
-    match output {
-        Ok(output) => {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let services: Vec<ServiceInfo> = stdout
+    match privileged::execute(privileged::runner::request_for(
+        Some(user.id),
+        Action::Systemctl {
+            verb: SystemctlVerb::ListUnits,
+            unit: None,
+        },
+    ))
+    .await
+    {
+        Ok(result) => {
+            let services: Vec<ServiceInfo> = result
+                .stdout
                 .lines()
                 .filter(|line| !line.trim().is_empty())
                 .map(|line| {
@@ -64,9 +76,7 @@ pub async fn list_services(_: AuthUser) -> HttpResponse {
                         load: iter.next().unwrap_or("").to_string(),
                         active: iter.next().unwrap_or("").to_string(),
                         sub: iter.next().unwrap_or("").to_string(),
-                        description: iter
-                            .collect::<Vec<&str>>()
-                            .join(" "),
+                        description: iter.collect::<Vec<&str>>().join(" "),
                     }
                 })
                 .collect();
@@ -78,133 +88,115 @@ pub async fn list_services(_: AuthUser) -> HttpResponse {
                 data: Some(services),
             })
         }
-        Err(err) => HttpResponse::InternalServerError().json(ResponseStructureError {
-            success: false,
-            code: 500,
-            message: err.to_string(),
-        }),
+        Err(err) => runner_error_response(err),
     }
 }
 
-async fn run_systemctl_command(action: &str, name: &str) -> HttpResponse {
-    let output = Command::new("systemctl")
-        .arg(action)
-        .arg(name)
-        .output()
-        .await;
-
-    match output {
-        Ok(output) => {
-            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-            let success = output.status.success();
-
-            if success {
-                HttpResponse::Ok().json(ResponseStructure {
-                    success: true,
-                    code: 200,
-                    message: String::from("success"),
-                    data: Some(serde_json::json!({
-                        "stdout": stdout,
-                        "stderr": stderr,
-                    })),
-                })
-            } else {
-                HttpResponse::InternalServerError().json(ResponseStructureError {
-                    success: false,
-                    code: 500,
-                    message: if stderr.is_empty() { stdout } else { stderr },
-                })
-            }
+async fn run_systemctl(
+    user: &AuthUser,
+    pool: &DBPool,
+    verb: SystemctlVerb,
+    name: &str,
+) -> HttpResponse {
+    if let Err(err) = rbac::require_perm(pool, user, PERM_SERVICE_WRITE) {
+        return err.error_response();
+    }
+    match privileged::execute(privileged::runner::request_for(
+        Some(user.id),
+        Action::Systemctl {
+            verb,
+            unit: Some(name.to_string()),
+        },
+    ))
+    .await
+    {
+        Ok(result) if result.exit_code == Some(0) || verb == SystemctlVerb::Status => {
+            HttpResponse::Ok().json(ResponseStructure {
+                success: true,
+                code: 200,
+                message: String::from("success"),
+                data: Some(serde_json::json!({
+                    "stdout": result.stdout,
+                    "stderr": result.stderr,
+                    "operation_id": result.operation_id,
+                    "duration_ms": result.duration_ms,
+                })),
+            })
         }
-        Err(err) => HttpResponse::InternalServerError().json(ResponseStructureError {
-            success: false,
-            code: 500,
-            message: err.to_string(),
-        }),
-    }
-}
-
-pub async fn start_service(_: AuthUser, path: web::Path<ServiceNamePath>) -> HttpResponse {
-    if !is_linux() {
-        return HttpResponse::BadRequest().json(ResponseStructureError {
-            success: false,
-            code: 400,
-            message: String::from("Service management is only supported on Linux"),
-        });
-    }
-    run_systemctl_command("start", &path.name).await
-}
-
-pub async fn stop_service(_: AuthUser, path: web::Path<ServiceNamePath>) -> HttpResponse {
-    if !is_linux() {
-        return HttpResponse::BadRequest().json(ResponseStructureError {
-            success: false,
-            code: 400,
-            message: String::from("Service management is only supported on Linux"),
-        });
-    }
-    run_systemctl_command("stop", &path.name).await
-}
-
-pub async fn restart_service(_: AuthUser, path: web::Path<ServiceNamePath>) -> HttpResponse {
-    if !is_linux() {
-        return HttpResponse::BadRequest().json(ResponseStructureError {
-            success: false,
-            code: 400,
-            message: String::from("Service management is only supported on Linux"),
-        });
-    }
-    run_systemctl_command("restart", &path.name).await
-}
-
-pub async fn get_service_status(_: AuthUser, path: web::Path<ServiceNamePath>) -> HttpResponse {
-    if !is_linux() {
-        return HttpResponse::BadRequest().json(ResponseStructureError {
-            success: false,
-            code: 400,
-            message: String::from("Service management is only supported on Linux"),
-        });
-    }
-
-    let output = Command::new("systemctl")
-        .args([
-            "status",
-            &path.name,
-            "--no-pager",
-            "--lines=20",
-        ])
-        .output()
-        .await;
-
-    match output {
-        Ok(output) => {
-            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-            let success = output.status.success();
-
-            if success {
-                HttpResponse::Ok().json(ResponseStructure {
-                    success: true,
-                    code: 200,
-                    message: String::from("success"),
-                    data: Some(serde_json::json!({
-                        "status": stdout,
-                        "logs": stderr,
-                    })),
-                })
+        Ok(result) => {
+            let message = if result.stderr.is_empty() {
+                result.stdout
             } else {
-                HttpResponse::InternalServerError().json(ResponseStructureError {
-                    success: false,
-                    code: 500,
-                    message: if stderr.is_empty() { stdout } else { stderr },
-                })
-            }
+                result.stderr
+            };
+            HttpResponse::InternalServerError().json(ResponseStructureError {
+                success: false,
+                code: 500,
+                message,
+            })
         }
-        Err(err) => HttpResponse::InternalServerError().json(ResponseStructureError {
-            success: false,
-            code: 500,
-            message: err.to_string(),
-        }),
+        Err(err) => runner_error_response(err),
     }
+}
+
+pub async fn start_service(
+    user: AuthUser,
+    pool: web::Data<DBPool>,
+    path: web::Path<ServiceNamePath>,
+) -> HttpResponse {
+    if !is_linux() {
+        return HttpResponse::BadRequest().json(ResponseStructureError {
+            success: false,
+            code: 400,
+            message: String::from("Service management is only supported on Linux"),
+        });
+    }
+    run_systemctl(&user, pool.get_ref(), SystemctlVerb::Start, &path.name).await
+}
+
+pub async fn stop_service(
+    user: AuthUser,
+    pool: web::Data<DBPool>,
+    path: web::Path<ServiceNamePath>,
+) -> HttpResponse {
+    if !is_linux() {
+        return HttpResponse::BadRequest().json(ResponseStructureError {
+            success: false,
+            code: 400,
+            message: String::from("Service management is only supported on Linux"),
+        });
+    }
+    run_systemctl(&user, pool.get_ref(), SystemctlVerb::Stop, &path.name).await
+}
+
+pub async fn restart_service(
+    user: AuthUser,
+    pool: web::Data<DBPool>,
+    path: web::Path<ServiceNamePath>,
+) -> HttpResponse {
+    if !is_linux() {
+        return HttpResponse::BadRequest().json(ResponseStructureError {
+            success: false,
+            code: 400,
+            message: String::from("Service management is only supported on Linux"),
+        });
+    }
+    run_systemctl(&user, pool.get_ref(), SystemctlVerb::Restart, &path.name).await
+}
+
+pub async fn get_service_status(
+    user: AuthUser,
+    pool: web::Data<DBPool>,
+    path: web::Path<ServiceNamePath>,
+) -> HttpResponse {
+    if !is_linux() {
+        return HttpResponse::BadRequest().json(ResponseStructureError {
+            success: false,
+            code: 400,
+            message: String::from("Service management is only supported on Linux"),
+        });
+    }
+    // Status is read-ish; still validate unit via runner and require write perm for M0
+    // consistency with other mutating service routes until a service:read perm exists.
+    run_systemctl(&user, pool.get_ref(), SystemctlVerb::Status, &path.name).await
 }

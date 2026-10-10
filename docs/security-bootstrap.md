@@ -70,4 +70,6 @@ EnvironmentFile=/etc/rustpanel/security.env
 
 自 RP-03 起：高风险写接口按权限码鉴权（admin/operator/viewer）。自 RP-06 起：文件 list/save/content 必须落在受管根内，拒绝 `..`、软链逃逸与根外绝对路径（403），写入使用同目录临时文件 + rename。
 
-这些保护尚不覆盖宿主特权拆分（RP-07）、审计 intent/outbox（RP-09）和备份恢复 CLI。生产准入继续按开发文档的全部 M0 条件验收。
+自 RP-07 起：firewall / systemd service 写操作经 `privileged` runner（动作白名单、参数校验、超时）。部署上建议主进程以非 root 用户运行、不加入 docker 组、不挂载宿主 Docker socket；独立 Unix-socket runner 仍为后续部署目标。
+
+这些保护尚不覆盖审计 intent/outbox（RP-09）和备份恢复 CLI。生产准入继续按开发文档的全部 M0 条件验收。

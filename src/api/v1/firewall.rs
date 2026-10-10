@@ -11,9 +11,9 @@ use actix_web::{web, HttpResponse, ResponseError};
 use serde::{Deserialize, Serialize};
 use crate::api::auth::AuthUser;
 use crate::api::{ResponseStructure, ResponseStructureError};
+use crate::privileged::{self, Action};
 use crate::service::db::DBPool;
 use crate::service::rbac::{self, PERM_FIREWALL_READ, PERM_FIREWALL_WRITE};
-use tokio::process::Command;
 
 // ── Response types ──
 
@@ -71,7 +71,6 @@ fn parse_iptables_rules(output: &str) -> Vec<IptablesRule> {
     for line in output.lines() {
         let trimmed = line.trim();
         if trimmed.starts_with("Chain ") {
-            // Chain INPUT (policy ACCEPT) -> "INPUT"
             current_chain = trimmed
                 .strip_prefix("Chain ")
                 .and_then(|s| s.split(' ').next())
@@ -104,22 +103,40 @@ fn parse_iptables_rules(output: &str) -> Vec<IptablesRule> {
     rules
 }
 
+fn runner_error_response(err: privileged::RunnerError) -> HttpResponse {
+    if err.is_rejected() {
+        ResponseStructureError::forbidden(&err.message())
+    } else {
+        HttpResponse::InternalServerError().json(ResponseStructureError {
+            success: false,
+            code: 500,
+            message: err.message(),
+        })
+    }
+}
 
-fn output_response(out: std::process::Output) -> HttpResponse {
-    if out.status.success() {
-        let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+fn result_response(result: privileged::RunnerResult) -> HttpResponse {
+    if result.exit_code == Some(0) {
         HttpResponse::Ok().json(ResponseStructure {
             success: true,
             code: 200,
             message: String::from("success"),
-            data: Some(serde_json::json!({"output": stdout})),
+            data: Some(serde_json::json!({
+                "output": result.stdout,
+                "operation_id": result.operation_id,
+                "duration_ms": result.duration_ms,
+            })),
         })
     } else {
-        let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+        let message = if result.stderr.trim().is_empty() {
+            result.stdout
+        } else {
+            result.stderr
+        };
         HttpResponse::InternalServerError().json(ResponseStructureError {
             success: false,
             code: 500,
-            message: stderr.trim().to_string(),
+            message: message.trim().to_string(),
         })
     }
 }
@@ -130,31 +147,28 @@ pub async fn get_firewall_status(user: AuthUser, pool: web::Data<DBPool>) -> Htt
     if let Err(err) = rbac::require_perm(pool.get_ref(), &user, PERM_FIREWALL_READ) {
         return err.error_response();
     }
-    let iptables_available = match Command::new("iptables")
-        .args(["-L", "-n", "--line-numbers"])
-        .output()
-        .await
+    let iptables_available = match privileged::execute(privileged::runner::request_for(
+        Some(user.id),
+        Action::IptablesList,
+    ))
+    .await
     {
-        Ok(output) => output.status.success(),
+        Ok(result) => result.exit_code == Some(0),
         Err(_) => false,
     };
 
-    let (ufw_available, ufw_active) = match Command::new("ufw")
-        .arg("status")
-        .output()
-        .await
-    {
-        Ok(output) => {
-            if output.status.success() {
-                let status_str = String::from_utf8_lossy(&output.stdout);
-                let active = status_str.contains("Status: active") || status_str.contains("active");
+    let (ufw_available, ufw_active) =
+        match privileged::execute(privileged::runner::request_for(Some(user.id), Action::UfwStatus))
+            .await
+        {
+            Ok(result) if result.exit_code == Some(0) => {
+                let active = result.stdout.contains("Status: active")
+                    || result.stdout.contains("active");
                 (true, Some(active))
-            } else {
-                (true, Some(false))
             }
-        }
-        Err(_) => (false, None),
-    };
+            Ok(_) => (true, Some(false)),
+            Err(_) => (false, None),
+        };
 
     HttpResponse::Ok().json(ResponseStructure {
         success: true,
@@ -172,35 +186,27 @@ pub async fn list_iptables_rules(user: AuthUser, pool: web::Data<DBPool>) -> Htt
     if let Err(err) = rbac::require_perm(pool.get_ref(), &user, PERM_FIREWALL_READ) {
         return err.error_response();
     }
-    match Command::new("iptables")
-        .args(["-L", "-n", "--line-numbers"])
-        .output()
-        .await
+    match privileged::execute(privileged::runner::request_for(
+        Some(user.id),
+        Action::IptablesList,
+    ))
+    .await
     {
-        Ok(output) => {
-            if output.status.success() {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                let rules = parse_iptables_rules(&stdout);
-                HttpResponse::Ok().json(ResponseStructure {
-                    success: true,
-                    code: 200,
-                    message: String::from("success"),
-                    data: Some(rules),
-                })
-            } else {
-                let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-                HttpResponse::InternalServerError().json(ResponseStructureError {
-                    success: false,
-                    code: 500,
-                    message: stderr.trim().to_string(),
-                })
-            }
+        Ok(result) if result.exit_code == Some(0) => {
+            let rules = parse_iptables_rules(&result.stdout);
+            HttpResponse::Ok().json(ResponseStructure {
+                success: true,
+                code: 200,
+                message: String::from("success"),
+                data: Some(rules),
+            })
         }
-        Err(e) => HttpResponse::InternalServerError().json(ResponseStructureError {
+        Ok(result) => HttpResponse::InternalServerError().json(ResponseStructureError {
             success: false,
             code: 500,
-            message: format!("Failed to execute iptables: {}", e),
+            message: result.stderr.trim().to_string(),
         }),
+        Err(err) => runner_error_response(err),
     }
 }
 
@@ -212,19 +218,21 @@ pub async fn add_iptables_rule(
     if let Err(err) = rbac::require_perm(pool.get_ref(), &user, PERM_FIREWALL_WRITE) {
         return err.error_response();
     }
-    let mut cmd = Command::new("iptables");
-    cmd.arg("-A").arg(&body.chain);
-    for part in body.rule.split_whitespace() {
-        cmd.arg(part);
-    }
-
-    match cmd.output().await {
-        Ok(out) => output_response(out),
-        Err(e) => HttpResponse::InternalServerError().json(ResponseStructureError {
-            success: false,
-            code: 500,
-            message: format!("Failed to execute iptables: {}", e),
-        }),
+    let args = match privileged::validate::tokenize_iptables_rule(&body.rule) {
+        Ok(args) => args,
+        Err(err) => return runner_error_response(err),
+    };
+    match privileged::execute(privileged::runner::request_for(
+        Some(user.id),
+        Action::IptablesAppend {
+            chain: body.chain.clone(),
+            args,
+        },
+    ))
+    .await
+    {
+        Ok(result) => result_response(result),
+        Err(err) => runner_error_response(err),
     }
 }
 
@@ -237,33 +245,30 @@ pub async fn delete_iptables_rule(
     if let Err(err) = rbac::require_perm(pool.get_ref(), &user, PERM_FIREWALL_WRITE) {
         return err.error_response();
     }
-    match Command::new("iptables")
-        .args(["-D", &path.chain, &query.num.to_string()])
-        .output()
-        .await
+    match privileged::execute(privileged::runner::request_for(
+        Some(user.id),
+        Action::IptablesDelete {
+            chain: path.chain.clone(),
+            num: query.num,
+        },
+    ))
+    .await
     {
-        Ok(out) => {
-            if out.status.success() {
-                HttpResponse::Ok().json(ResponseStructure {
-                    success: true,
-                    code: 200,
-                    message: String::from("success"),
-                    data: Some("ok"),
-                })
-            } else {
-                let stderr = String::from_utf8_lossy(&out.stderr).to_string();
-                HttpResponse::InternalServerError().json(ResponseStructureError {
-                    success: false,
-                    code: 500,
-                    message: stderr.trim().to_string(),
-                })
-            }
-        }
-        Err(e) => HttpResponse::InternalServerError().json(ResponseStructureError {
+        Ok(result) if result.exit_code == Some(0) => HttpResponse::Ok().json(ResponseStructure {
+            success: true,
+            code: 200,
+            message: String::from("success"),
+            data: Some(serde_json::json!({
+                "ok": true,
+                "operation_id": result.operation_id,
+            })),
+        }),
+        Ok(result) => HttpResponse::InternalServerError().json(ResponseStructureError {
             success: false,
             code: 500,
-            message: format!("Failed to execute iptables: {}", e),
+            message: result.stderr.trim().to_string(),
         }),
+        Err(err) => runner_error_response(err),
     }
 }
 
@@ -275,37 +280,33 @@ pub async fn enable_port(
     if let Err(err) = rbac::require_perm(pool.get_ref(), &user, PERM_FIREWALL_WRITE) {
         return err.error_response();
     }
-    let protocol = body.protocol.as_deref().unwrap_or("tcp");
-    let action = body.action.as_deref().unwrap_or("ACCEPT");
+    let protocol = body.protocol.clone().unwrap_or_else(|| "tcp".into());
+    let jump = body.action.clone().unwrap_or_else(|| "ACCEPT".into());
 
-    match Command::new("iptables")
-        .args(["-A", "INPUT", "-p", protocol, "--dport"])
-        .arg(body.port.to_string())
-        .args(["-j", action])
-        .output()
-        .await
+    match privileged::execute(privileged::runner::request_for(
+        Some(user.id),
+        Action::IptablesAllowPort {
+            port: body.port,
+            protocol,
+            jump,
+        },
+    ))
+    .await
     {
-        Ok(out) => {
-            if out.status.success() {
-                HttpResponse::Ok().json(ResponseStructure {
-                    success: true,
-                    code: 200,
-                    message: String::from("success"),
-                    data: Some("ok"),
-                })
-            } else {
-                let stderr = String::from_utf8_lossy(&out.stderr).to_string();
-                HttpResponse::InternalServerError().json(ResponseStructureError {
-                    success: false,
-                    code: 500,
-                    message: stderr.trim().to_string(),
-                })
-            }
-        }
-        Err(e) => HttpResponse::InternalServerError().json(ResponseStructureError {
+        Ok(result) if result.exit_code == Some(0) => HttpResponse::Ok().json(ResponseStructure {
+            success: true,
+            code: 200,
+            message: String::from("success"),
+            data: Some(serde_json::json!({
+                "ok": true,
+                "operation_id": result.operation_id,
+            })),
+        }),
+        Ok(result) => HttpResponse::InternalServerError().json(ResponseStructureError {
             success: false,
             code: 500,
-            message: format!("Failed to execute iptables: {}", e),
+            message: result.stderr.trim().to_string(),
         }),
+        Err(err) => runner_error_response(err),
     }
 }
