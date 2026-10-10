@@ -108,20 +108,30 @@ impl FromRequest for AuthUser {
     }
 }
 
-/// Temporary coarse authorization until the resource-scoped RBAC migration lands.
-pub struct AdminUser;
+/// Requires the `user:admin` permission (resolved from DB roles on each request).
+pub struct AdminUser(pub AuthUser);
+
+impl std::ops::Deref for AdminUser {
+    type Target = AuthUser;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
 
 impl FromRequest for AdminUser {
     type Error = Error;
     type Future = Pin<Box<dyn Future<Output = Result<Self, Error>>>>;
 
     fn from_request(req: &HttpRequest, payload: &mut Payload) -> Self::Future {
-        let user = AuthUser::from_request(req, payload);
+        let user_fut = AuthUser::from_request(req, payload);
+        let pool = req.app_data::<web::Data<DBPool>>().cloned();
         Box::pin(async move {
-            if user.await?.authority != "admin" {
-                return Err(CommonError::Forbidden("Administrator access required".into()).into());
-            }
-            Ok(Self)
+            let user = user_fut.await?;
+            let pool = pool.ok_or_else(|| {
+                CommonError::ServiceUnavailable("Authorization database unavailable".into())
+            })?;
+            crate::service::rbac::require_perm(pool.get_ref(), &user, crate::service::rbac::PERM_USER_ADMIN)?;
+            Ok(Self(user))
         })
     }
 }

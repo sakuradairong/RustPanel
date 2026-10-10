@@ -34,21 +34,28 @@
 
 要点：
 
-- Schema 期望版本现为 **3**。
+- Schema 期望版本在 RP-23 时为 **3**；RP-03 起为 **4**。
 - 旧版把 password 哈希放进 JWT `sub` 的令牌不再被接受，用户需重新登录。
 - 访问令牌不再包含口令字段。
+
+## 第五批：RP-03 资源范围 RBAC
+
+| 任务 | 状态 | 本次实现 | 后续边界 |
+| --- | --- | --- | --- |
+| RP-03 资源范围 RBAC | 已实现并验证 | 迁移 `004_rbac`：`roles`/`permissions`/`role_permissions`/`user_roles`；内置 admin/operator/viewer；`require_perm` + `AdminUser`（`user:admin`）；installer/sites/firewall/file 写与 nginx 站点写受权限约束；新建用户默认 viewer；权限查 DB 即时生效 | Docker/process/service 写权限可继续收紧；资源实例级范围（按站点/路径）属后续增强 |
 
 ## 验证范围
 
 - 既有安全集成测试保留并改为会话 JWT：无凭据 SSL 401、角色 403、禁用/`token_version`/删除用户拒绝、登出后立即失效、池耗尽 503、缺密钥拒启。
-- Argon2id / SHA-1 重哈希单测；登录限流单测；迁移到版本 3 + 热备校验。
+- Argon2id / SHA-1 重哈希单测；登录限流单测；迁移到版本 4 + 热备校验。
 - 断言访问令牌字符串不含口令哈希。
+- Viewer 对 installer install、nginx 建站、firewall 规则写、file save 返回 403。
 
-构建和测试命令：`cargo test --locked`；本批结果为 35 个测试全部通过（24 个库测试 + 11 个集成测试）。系统级 TLS、ACME、浏览器回归和跨架构尚未验证。
+构建和测试命令：`cargo test --locked`；本批结果为 37 个测试全部通过（25 个库测试 + 12 个集成测试）。系统级 TLS、ACME、浏览器回归和跨架构尚未验证。
 
 ## 接下来
 
-1. RP-03 / RP-06 / RP-07 / RP-09：资源权限、路径边界、受限 runner 与审计。
+1. RP-06 / RP-07 / RP-09：路径边界、受限 runner 与审计。
 2. RP-05 补齐一次性 SSE 票据；RP-10 TLS/bootstrap/CSRF；RP-11 audit/deny/SBOM。
 3. RP-23 增强：refresh 轮换与会话过期清理任务。
 

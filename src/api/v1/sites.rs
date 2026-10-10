@@ -1,8 +1,10 @@
-use actix_web::{web, HttpResponse};
+use actix_web::{web, HttpResponse, ResponseError};
 use serde::Deserialize;
 
 use crate::api::auth::AuthUser;
 use crate::api::{ResponseStructure, ResponseStructureError};
+use crate::service::db::DBPool;
+use crate::service::rbac::{self, PERM_SITE_WRITE};
 use crate::models::webserver::apache::{self, ApacheLayout};
 use crate::models::webserver::caddy::{self, CaddyLayout};
 use crate::models::webserver::config::{self, SiteSpec, SslMode};
@@ -58,7 +60,20 @@ pub async fn list_caddy_sites(_: AuthUser) -> HttpResponse {
     }
 }
 
-pub async fn create_apache_site(_: AuthUser, body: web::Json<CreateSiteBody>) -> HttpResponse {
+fn deny_without_site_write(user: &AuthUser, pool: &DBPool) -> Option<HttpResponse> {
+    rbac::require_perm(pool, user, PERM_SITE_WRITE)
+        .err()
+        .map(|err| err.error_response())
+}
+
+pub async fn create_apache_site(
+    user: AuthUser,
+    pool: web::Data<DBPool>,
+    body: web::Json<CreateSiteBody>,
+) -> HttpResponse {
+    if let Some(response) = deny_without_site_write(&user, pool.get_ref()) {
+        return response;
+    }
     let layout = match require_apache().await {
         Ok(layout) => layout,
         Err(response) => return response,
@@ -78,7 +93,14 @@ pub async fn create_apache_site(_: AuthUser, body: web::Json<CreateSiteBody>) ->
     finish_create(&written, apache::reload(&layout).await, "apache")
 }
 
-pub async fn create_caddy_site(_: AuthUser, body: web::Json<CreateSiteBody>) -> HttpResponse {
+pub async fn create_caddy_site(
+    user: AuthUser,
+    pool: web::Data<DBPool>,
+    body: web::Json<CreateSiteBody>,
+) -> HttpResponse {
+    if let Some(response) = deny_without_site_write(&user, pool.get_ref()) {
+        return response;
+    }
     let layout = match require_caddy().await {
         Ok(layout) => layout,
         Err(response) => return response,
@@ -98,7 +120,14 @@ pub async fn create_caddy_site(_: AuthUser, body: web::Json<CreateSiteBody>) -> 
     finish_create(&written, caddy::reload(&layout).await, "caddy")
 }
 
-pub async fn delete_apache_site(_: AuthUser, path: web::Path<SitePath>) -> HttpResponse {
+pub async fn delete_apache_site(
+    user: AuthUser,
+    pool: web::Data<DBPool>,
+    path: web::Path<SitePath>,
+) -> HttpResponse {
+    if let Some(response) = deny_without_site_write(&user, pool.get_ref()) {
+        return response;
+    }
     let layout = match require_apache().await {
         Ok(layout) => layout,
         Err(response) => return response,
@@ -114,7 +143,14 @@ pub async fn delete_apache_site(_: AuthUser, path: web::Path<SitePath>) -> HttpR
     )
 }
 
-pub async fn delete_caddy_site(_: AuthUser, path: web::Path<SitePath>) -> HttpResponse {
+pub async fn delete_caddy_site(
+    user: AuthUser,
+    pool: web::Data<DBPool>,
+    path: web::Path<SitePath>,
+) -> HttpResponse {
+    if let Some(response) = deny_without_site_write(&user, pool.get_ref()) {
+        return response;
+    }
     let layout = match require_caddy().await {
         Ok(layout) => layout,
         Err(response) => return response,
@@ -130,23 +166,54 @@ pub async fn delete_caddy_site(_: AuthUser, path: web::Path<SitePath>) -> HttpRe
     )
 }
 
-pub async fn enable_apache_site(_: AuthUser, path: web::Path<SitePath>) -> HttpResponse {
+pub async fn enable_apache_site(
+    user: AuthUser,
+    pool: web::Data<DBPool>,
+    path: web::Path<SitePath>,
+) -> HttpResponse {
+    if let Some(response) = deny_without_site_write(&user, pool.get_ref()) {
+        return response;
+    }
     change_apache(&path.name, true).await
 }
 
-pub async fn disable_apache_site(_: AuthUser, path: web::Path<SitePath>) -> HttpResponse {
+pub async fn disable_apache_site(
+    user: AuthUser,
+    pool: web::Data<DBPool>,
+    path: web::Path<SitePath>,
+) -> HttpResponse {
+    if let Some(response) = deny_without_site_write(&user, pool.get_ref()) {
+        return response;
+    }
     change_apache(&path.name, false).await
 }
 
-pub async fn enable_caddy_site(_: AuthUser, path: web::Path<SitePath>) -> HttpResponse {
+pub async fn enable_caddy_site(
+    user: AuthUser,
+    pool: web::Data<DBPool>,
+    path: web::Path<SitePath>,
+) -> HttpResponse {
+    if let Some(response) = deny_without_site_write(&user, pool.get_ref()) {
+        return response;
+    }
     change_caddy(&path.name, true).await
 }
 
-pub async fn disable_caddy_site(_: AuthUser, path: web::Path<SitePath>) -> HttpResponse {
+pub async fn disable_caddy_site(
+    user: AuthUser,
+    pool: web::Data<DBPool>,
+    path: web::Path<SitePath>,
+) -> HttpResponse {
+    if let Some(response) = deny_without_site_write(&user, pool.get_ref()) {
+        return response;
+    }
     change_caddy(&path.name, false).await
 }
 
-pub async fn reload_apache(_: AuthUser) -> HttpResponse {
+pub async fn reload_apache(user: AuthUser, pool: web::Data<DBPool>) -> HttpResponse {
+    if let Some(response) = deny_without_site_write(&user, pool.get_ref()) {
+        return response;
+    }
     let layout = match require_apache().await {
         Ok(layout) => layout,
         Err(response) => return response,
@@ -157,7 +224,10 @@ pub async fn reload_apache(_: AuthUser) -> HttpResponse {
     }
 }
 
-pub async fn reload_caddy(_: AuthUser) -> HttpResponse {
+pub async fn reload_caddy(user: AuthUser, pool: web::Data<DBPool>) -> HttpResponse {
+    if let Some(response) = deny_without_site_write(&user, pool.get_ref()) {
+        return response;
+    }
     let layout = match require_caddy().await {
         Ok(layout) => layout,
         Err(response) => return response,

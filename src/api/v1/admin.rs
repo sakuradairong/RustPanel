@@ -12,7 +12,7 @@ use chrono::Utc;
 use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::api::auth::AuthUser;
+use crate::api::auth::AdminUser;
 use crate::api::{ResponseStructure, ResponseStructureError};
 use crate::common::fun::generate_random_string;
 use crate::errors::common::CommonError;
@@ -20,7 +20,7 @@ use crate::models::structure::rp_users::Users;
 use crate::models::structure::schema::rp_users;
 use crate::service::db::DBPool;
 use crate::service::password::{self, ALGO_ARGON2ID};
-use crate::service::sessions;
+use crate::service::{rbac, sessions};
 
 #[derive(Deserialize)]
 pub struct CreateUserBody {
@@ -80,14 +80,6 @@ fn validate_authority(authority: &str) -> bool {
     authority == "admin" || authority == "user"
 }
 
-fn require_admin(user: &AuthUser) -> Result<(), HttpResponse> {
-    if user.authority != "admin" {
-        return Err(ResponseStructureError::forbidden("Admin privileges required"));
-    }
-    Ok(())
-}
-
-
 fn map_diesel_error(err: diesel::result::Error) -> HttpResponse {
     let common_err = CommonError::from(err);
     match common_err {
@@ -104,8 +96,7 @@ fn map_diesel_error(err: diesel::result::Error) -> HttpResponse {
     }
 }
 
-pub async fn list_users(user: AuthUser, pool: web::Data<DBPool>) -> HttpResponse {
-    if let Err(resp) = require_admin(&user) { return resp; }
+pub async fn list_users(_admin: AdminUser, pool: web::Data<DBPool>) -> HttpResponse {
     let mut conn = match pool.get() {
         Ok(c) => c,
         Err(_) => {
@@ -151,9 +142,11 @@ pub async fn list_users(user: AuthUser, pool: web::Data<DBPool>) -> HttpResponse
     }
 }
 
-pub async fn create_user(user: AuthUser, pool: web::Data<DBPool>,
-body: web::Json<CreateUserBody>,) -> HttpResponse {
-    if let Err(resp) = require_admin(&user) { return resp; }
+pub async fn create_user(
+    _admin: AdminUser,
+    pool: web::Data<DBPool>,
+    body: web::Json<CreateUserBody>,
+) -> HttpResponse {
     let mut conn = match pool.get() {
         Ok(c) => c,
         Err(_) => {
@@ -217,25 +210,36 @@ body: web::Json<CreateUserBody>,) -> HttpResponse {
         .filter(rp_users::username.eq(&body.username))
         .first::<Users>(&mut *conn)
     {
-        Ok(user) => HttpResponse::Ok().json(ResponseStructure {
-            success: true,
-            code: 200,
-            message: String::from("success"),
-            data: Some(CreateUserResponse {
-                id: user.id,
-                username: user.username,
-                authority: user.authority,
-                initial_password: password,
-            }),
-        }),
+        Ok(user) => {
+            if let Err(err) = rbac::assign_role_for_authority(&mut conn, user.id, &user.authority) {
+                return HttpResponse::InternalServerError().json(ResponseStructureError {
+                    success: false,
+                    code: 500,
+                    message: err,
+                });
+            }
+            HttpResponse::Ok().json(ResponseStructure {
+                success: true,
+                code: 200,
+                message: String::from("success"),
+                data: Some(CreateUserResponse {
+                    id: user.id,
+                    username: user.username,
+                    authority: user.authority,
+                    initial_password: password,
+                }),
+            })
+        }
         Err(err) => map_diesel_error(err),
     }
 }
 
-pub async fn update_user(user: AuthUser, pool: web::Data<DBPool>,
-path: web::Path<UpdateUserPath>,
-body: web::Json<UpdateUserBody>,) -> HttpResponse {
-    if let Err(resp) = require_admin(&user) { return resp; }
+pub async fn update_user(
+    _admin: AdminUser,
+    pool: web::Data<DBPool>,
+    path: web::Path<UpdateUserPath>,
+    body: web::Json<UpdateUserBody>,
+) -> HttpResponse {
     let mut conn = match pool.get() {
         Ok(c) => c,
         Err(_) => {
@@ -320,6 +324,13 @@ body: web::Json<UpdateUserBody>,) -> HttpResponse {
         .execute(&mut *conn)
     {
         Ok(_) => {
+            if let Err(err) = rbac::assign_role_for_authority(&mut conn, id, &user.authority) {
+                return HttpResponse::InternalServerError().json(ResponseStructureError {
+                    success: false,
+                    code: 500,
+                    message: err,
+                });
+            }
             if clear_must_change {
                 let _ = sessions::bump_token_version(&mut conn, id);
                 let _ = sessions::revoke_all_for_user(&mut conn, id);
@@ -341,9 +352,11 @@ body: web::Json<UpdateUserBody>,) -> HttpResponse {
     }
 }
 
-pub async fn delete_user(user: AuthUser, pool: web::Data<DBPool>,
-path: web::Path<DeleteUserPath>,) -> HttpResponse {
-    if let Err(resp) = require_admin(&user) { return resp; }
+pub async fn delete_user(
+    _admin: AdminUser,
+    pool: web::Data<DBPool>,
+    path: web::Path<DeleteUserPath>,
+) -> HttpResponse {
     let mut conn = match pool.get() {
         Ok(c) => c,
         Err(_) => {
@@ -371,9 +384,11 @@ path: web::Path<DeleteUserPath>,) -> HttpResponse {
     }
 }
 
-pub async fn reset_password(user: AuthUser, pool: web::Data<DBPool>,
-path: web::Path<ResetPasswordPath>,) -> HttpResponse {
-    if let Err(resp) = require_admin(&user) { return resp; }
+pub async fn reset_password(
+    _admin: AdminUser,
+    pool: web::Data<DBPool>,
+    path: web::Path<ResetPasswordPath>,
+) -> HttpResponse {
     let mut conn = match pool.get() {
         Ok(c) => c,
         Err(_) => {

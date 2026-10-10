@@ -50,7 +50,9 @@ fn database(with_schema: bool) -> (NamedTempFile, DBPool) {
         ) VALUES (
             'operator', 'test-password-hash', 'test-salt', 'user', 0, 0,
             '2026-10-10 00:00:00', '2026-10-10 00:00:00', 'sha1', 0, 0
-        );",
+        );
+        INSERT OR IGNORE INTO user_roles (user_id, role_id)
+        SELECT id, 3 FROM rp_users WHERE username = 'operator';",
             )
             .unwrap();
     }
@@ -200,7 +202,7 @@ async fn disabled_missing_changed_password_and_expired_users_are_rejected() {
     let deleted_user_token = token_for(&pool, 1, 0, 3600);
     pool.get()
         .unwrap()
-        .batch_execute("DELETE FROM sessions; DELETE FROM rp_users;")
+        .batch_execute("DELETE FROM sessions; DELETE FROM user_roles; DELETE FROM rp_users;")
         .unwrap();
     let request = actix_test::TestRequest::get()
         .uri("/api/v1/user/me")
