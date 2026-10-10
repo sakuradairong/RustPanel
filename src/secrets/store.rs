@@ -1,5 +1,6 @@
 //! Persist sealed secrets in SQLite; never write plaintext columns.
 use diesel::{
+    connection::SimpleConnection,
     sql_query,
     sql_types::{Blob, Integer, Text},
     QueryableByName, RunQueryDsl, SqliteConnection,
@@ -152,53 +153,72 @@ fn load_record(conn: &mut SqliteConnection, name: &str) -> Result<SecretRecord, 
 }
 
 /// Re-wrap every secret currently under `old_kek` onto `new_kek`.
+///
+/// Runs in a single SQLite transaction so a crash cannot leave a split `key_id` set.
 pub fn rewrap_all(
     conn: &mut SqliteConnection,
     old_kek: &MasterKey,
     new_kek: &MasterKey,
 ) -> Result<usize, String> {
-    register_key(conn, new_kek.key_id())?;
-    let rows: Vec<SecretRow> = sql_query(
-        "SELECT id, name, purpose, ciphertext, nonce, wrapped_dek, wrap_nonce, key_id
-         FROM secrets WHERE key_id = ?1",
-    )
-    .bind::<Text, _>(old_kek.key_id())
-    .load(conn)
-    .map_err(|err| format!("Failed to list secrets for rotation: {err}"))?;
+    conn.batch_execute("BEGIN IMMEDIATE")
+        .map_err(|err| format!("Failed to begin secret rotation transaction: {err}"))?;
 
-    let mut count = 0usize;
-    let ts = now_utc();
-    for row in rows {
-        let sealed = SealedSecret {
-            ciphertext: row.ciphertext.clone(),
-            nonce: row.nonce.clone(),
-            wrapped_dek: row.wrapped_dek.clone(),
-            wrap_nonce: row.wrap_nonce.clone(),
-            key_id: row.key_id.clone(),
-        };
-        let rotated = envelope::rewrap(old_kek, new_kek, &sealed)?;
-        sql_query(
-            "UPDATE secrets SET wrapped_dek = ?1, wrap_nonce = ?2, key_id = ?3, updated_at = ?4
-             WHERE id = ?5",
+    let result = (|| {
+        register_key(conn, new_kek.key_id())?;
+        let rows: Vec<SecretRow> = sql_query(
+            "SELECT id, name, purpose, ciphertext, nonce, wrapped_dek, wrap_nonce, key_id
+             FROM secrets WHERE key_id = ?1",
         )
-        .bind::<Blob, _>(&rotated.wrapped_dek)
-        .bind::<Blob, _>(&rotated.wrap_nonce)
-        .bind::<Text, _>(new_kek.key_id())
-        .bind::<Text, _>(&ts)
-        .bind::<Integer, _>(row.id)
-        .execute(conn)
-        .map_err(|err| format!("Failed to update rotated secret: {err}"))?;
-        count += 1;
-    }
-
-    sql_query("UPDATE secret_keys SET retired_at = ?1 WHERE key_id = ?2 AND key_id != ?3")
-        .bind::<Text, _>(&ts)
         .bind::<Text, _>(old_kek.key_id())
-        .bind::<Text, _>(new_kek.key_id())
-        .execute(conn)
-        .map_err(|err| format!("Failed to retire old secret key: {err}"))?;
+        .load(conn)
+        .map_err(|err| format!("Failed to list secrets for rotation: {err}"))?;
 
-    Ok(count)
+        let mut count = 0usize;
+        let ts = now_utc();
+        for row in rows {
+            let sealed = SealedSecret {
+                ciphertext: row.ciphertext.clone(),
+                nonce: row.nonce.clone(),
+                wrapped_dek: row.wrapped_dek.clone(),
+                wrap_nonce: row.wrap_nonce.clone(),
+                key_id: row.key_id.clone(),
+            };
+            let rotated = envelope::rewrap(old_kek, new_kek, &sealed)?;
+            sql_query(
+                "UPDATE secrets SET wrapped_dek = ?1, wrap_nonce = ?2, key_id = ?3, updated_at = ?4
+                 WHERE id = ?5",
+            )
+            .bind::<Blob, _>(&rotated.wrapped_dek)
+            .bind::<Blob, _>(&rotated.wrap_nonce)
+            .bind::<Text, _>(new_kek.key_id())
+            .bind::<Text, _>(&ts)
+            .bind::<Integer, _>(row.id)
+            .execute(conn)
+            .map_err(|err| format!("Failed to update rotated secret: {err}"))?;
+            count += 1;
+        }
+
+        sql_query("UPDATE secret_keys SET retired_at = ?1 WHERE key_id = ?2 AND key_id != ?3")
+            .bind::<Text, _>(&ts)
+            .bind::<Text, _>(old_kek.key_id())
+            .bind::<Text, _>(new_kek.key_id())
+            .execute(conn)
+            .map_err(|err| format!("Failed to retire old secret key: {err}"))?;
+
+        Ok(count)
+    })();
+
+    match result {
+        Ok(count) => {
+            conn.batch_execute("COMMIT")
+                .map_err(|err| format!("Failed to commit secret rotation: {err}"))?;
+            Ok(count)
+        }
+        Err(err) => {
+            let _ = conn.batch_execute("ROLLBACK");
+            Err(err)
+        }
+    }
 }
 
 #[cfg(test)]
