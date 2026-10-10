@@ -1,6 +1,6 @@
 //! RBAC regressions: default viewers cannot call high-risk write APIs.
 use actix_web::{http::StatusCode, test as actix_test, web, App};
-use diesel::{connection::SimpleConnection, r2d2::ConnectionManager, SqliteConnection};
+use diesel::{connection::SimpleConnection, r2d2::ConnectionManager, RunQueryDsl, SqliteConnection};
 use rust_panel::{
     api,
     api::auth::generate_jwt,
@@ -30,7 +30,7 @@ fn test_keys() {
     });
 }
 
-fn pool_with_viewer() -> (NamedTempFile, DBPool, String) {
+fn pool_with_role(role_sql: &str) -> (NamedTempFile, DBPool, String) {
     test_keys();
     let file = NamedTempFile::new().unwrap();
     let pool = DBPool::builder()
@@ -43,7 +43,7 @@ fn pool_with_viewer() -> (NamedTempFile, DBPool, String) {
     migrations::migrate(&pool).unwrap();
     pool.get()
         .unwrap()
-        .batch_execute(
+        .batch_execute(&format!(
             "INSERT INTO rp_users (
             username, password, salt, authority, error_count, status,
             created_at, updated_at, password_algo, must_change_password, token_version
@@ -51,9 +51,8 @@ fn pool_with_viewer() -> (NamedTempFile, DBPool, String) {
             'viewer', 'hash', '', 'user', 0, 0,
             '2026-10-10 00:00:00', '2026-10-10 00:00:00', 'argon2id', 0, 0
         );
-        INSERT OR IGNORE INTO user_roles (user_id, role_id)
-        SELECT id, 3 FROM rp_users WHERE username = 'viewer';",
-        )
+        {role_sql}",
+        ))
         .unwrap();
     let mut conn = pool.get().unwrap();
     let now = SystemTime::now()
@@ -206,3 +205,79 @@ async fn viewer_retains_read_access_to_docker_and_log_lists() {
         "log list"
     );
 }
+
+fn pool_with_viewer() -> (NamedTempFile, DBPool, String) {
+    pool_with_role(
+        "INSERT OR IGNORE INTO user_roles (user_id, role_id)
+         SELECT id, 3 FROM rp_users WHERE username = 'viewer';",
+    )
+}
+
+/// Role rows are the single source of truth: the legacy `authority` column
+/// no longer grants anything by itself.
+#[actix_web::test]
+async fn legacy_admin_without_role_rows_holds_nothing() {
+    let (_file, pool, bearer) = pool_with_role("-- no role rows");
+    let mut conn = pool.get().unwrap();
+    diesel::sql_query("UPDATE rp_users SET authority = 'admin' WHERE id = 1")
+        .execute(&mut conn)
+        .unwrap();
+    drop(conn);
+    let app = actix_test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool))
+            .service(api::route::v1()),
+    )
+    .await;
+
+    for (method, path) in [
+        (actix_web::http::Method::GET, "/api/v1/admin/users"),
+        (actix_web::http::Method::POST, "/api/v1/ssl/issue"),
+        (actix_web::http::Method::POST, "/api/v1/docker/containers/abc/start"),
+    ] {
+        let request = actix_test::TestRequest::default()
+            .method(method)
+            .uri(path)
+            .insert_header(("Authorization", format!("Bearer {bearer}")))
+            .set_json(serde_json::json!({"domains": ["example.invalid"]}))
+            .to_request();
+        assert_eq!(
+            actix_test::call_service(&app, request).await.status(),
+            StatusCode::FORBIDDEN,
+            "authority='admin' without role rows must not grant {path}"
+        );
+    }
+}
+
+/// The seeded operator role actually reaches the cert endpoints it holds
+/// permissions for (previously gated behind user:admin, unreachable).
+#[actix_web::test]
+async fn operator_passes_rbac_on_certificate_mutations() {
+    let (_file, pool, bearer) = pool_with_role(
+        "UPDATE rp_users SET authority = 'user' WHERE id = 1;
+         INSERT OR IGNORE INTO user_roles (user_id, role_id)
+         SELECT id, 2 FROM rp_users WHERE username = 'viewer';",
+    );
+    let app = actix_test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool))
+            .service(api::route::v1()),
+    )
+    .await;
+
+    // RBAC passes; the certbot call itself may fail (500) in the test
+    // environment — the assertion is that it is never a permission denial.
+    for path in ["/api/v1/ssl/issue", "/api/v1/ssl/setup"] {
+        let request = actix_test::TestRequest::post()
+            .uri(path)
+            .insert_header(("Authorization", format!("Bearer {bearer}")))
+            .set_json(serde_json::json!({"domains": ["example.invalid"], "email": "t@e.invalid"}))
+            .to_request();
+        assert_ne!(
+            actix_test::call_service(&app, request).await.status(),
+            StatusCode::FORBIDDEN,
+            "operator must reach {path}"
+        );
+    }
+}
+
