@@ -19,10 +19,13 @@ pub const PERM_APP_INSTALL: &str = "app:install";
 pub const PERM_APP_UNINSTALL: &str = "app:uninstall";
 pub const PERM_APP_READ: &str = "app:read";
 pub const PERM_DOCKER_WRITE: &str = "docker:write";
+pub const PERM_DOCKER_READ: &str = "docker:read";
 pub const PERM_FIREWALL_WRITE: &str = "firewall:write";
 pub const PERM_FIREWALL_READ: &str = "firewall:read";
 pub const PERM_SERVICE_WRITE: &str = "service:write";
 pub const PERM_PROCESS_WRITE: &str = "process:write";
+pub const PERM_PROCESS_READ: &str = "process:read";
+pub const PERM_LOG_READ: &str = "log:read";
 pub const PERM_CERT_ISSUE: &str = "cert:issue";
 pub const PERM_CERT_DEPLOY: &str = "cert:deploy";
 

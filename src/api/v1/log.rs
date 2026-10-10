@@ -8,7 +8,9 @@
 
 use crate::api::auth::AuthUser;
 use crate::api::{ResponseStructure, ResponseStructureError};
-use actix_web::{web, HttpResponse};
+use crate::service::db::DBPool;
+use crate::service::rbac::{self, PERM_LOG_READ};
+use actix_web::{web, HttpResponse, ResponseError};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -29,7 +31,10 @@ struct LogFileEntry {
     pub modified: u64,
 }
 
-pub async fn list_logs(_: AuthUser) -> HttpResponse {
+pub async fn list_logs(user: AuthUser, pool: web::Data<DBPool>) -> HttpResponse {
+    if let Err(err) = rbac::require_perm(pool.get_ref(), &user, PERM_LOG_READ) {
+        return err.error_response();
+    }
     let mut files = Vec::new();
 
     // Scan ./runtime/logs/ for .log files
@@ -102,7 +107,10 @@ pub async fn list_logs(_: AuthUser) -> HttpResponse {
     })
 }
 
-pub async fn read_log(_: AuthUser, query: web::Query<ReadLogQuery>) -> HttpResponse {
+pub async fn read_log(user: AuthUser, pool: web::Data<DBPool>, query: web::Query<ReadLogQuery>) -> HttpResponse {
+    if let Err(err) = rbac::require_perm(pool.get_ref(), &user, PERM_LOG_READ) {
+        return err.error_response();
+    }
     // Security: reject paths containing ".." to prevent directory traversal
     if query.path.contains("..") {
         return HttpResponse::BadRequest().json(ResponseStructureError {
