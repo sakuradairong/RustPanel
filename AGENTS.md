@@ -47,6 +47,8 @@ than by hand-crafting curl requests.
 
 ### Lint / test
 - Lint: `cargo clippy` (currently emits warnings only; there is no deny config).
-- Tests: `cargo test` (the repo currently has no `#[test]` functions, so this
-  compiles and reports 0 tests). CI (`.github/workflows/rust.yml`) runs
-  `cargo build` + `cargo test` on the `dev` branch.
+- Tests: `cargo test --locked` (unit tests in `src/` plus integration suites in
+  `tests/` covering security, RBAC, file bounds, the privileged runner, SSE
+  tickets, and bootstrap/CSRF behavior). CI (`.github/workflows/rust.yml`) runs
+  `cargo build --locked` + `cargo test --locked` plus a `cargo-deny` supply-chain
+  job on the `dev` branch and pull requests.
