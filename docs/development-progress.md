@@ -14,6 +14,18 @@
 
 兼容变更和部署步骤见[安全密钥配置](security-bootstrap.md)。这批没有 schema 迁移，没有变更用户数据，没有执行真实 Certbot、Docker、防火墙或生产数据库操作。
 
+## 第二批：RP-13 schema 迁移与 SQLite 热备
+
+| 任务 | 状态 | 本次实现 | 后续边界 |
+| --- | --- | --- | --- |
+| RP-13 版本化 schema 迁移与 SQLite 一致性热备 | 已实现并验证 | `schema_migrations` 表；`001_initial` 创建 `rp_users`；空库迁移、旧库无 history 时基线采纳、checksum 不一致拒启；`VACUUM INTO` 热备后 `integrity_check` + 版本校验；启动走 `migrate_and_bootstrap` fail-closed | Argon2id/会话表（RP-01/RP-23）、权限表（RP-03）将作为后续有编号迁移加入；CLI `rp backup panel` 属 RP-43 |
+
+要点：
+
+- Schema 权威是 `schema_migrations`，不是 `panel.lock`。
+- 空用户表且存在 `panel.lock` 时拒绝静默重新灌入管理员，避免误覆盖运维意图。
+- 仍保留 SHA-1 口令与 `initial_password` 明文列；口令迁移属 RP-01，不在本批改写用户数据。
+
 ## 验证范围
 
 真实 Actix 路由使用临时 SQLite 数据库验证以下行为：
@@ -26,12 +38,19 @@
 - 缺失/过短密钥时真实 `panel` 二进制拒绝启动，未创建 runtime 或数据库，错误不泄露输入密钥。
 - 密钥纯校验测试覆盖长度、空白、重复和已公开值；登录查询回归验证正确密码也不能登录禁用账号。
 
-构建和测试命令：`cargo test --locked --offline`；本批结果为 23 个测试全部通过（14 个库测试 + 9 个集成测试），既有站点/安装器单测保留。系统级 TLS 部署、ACME 签发、完整浏览器回归和跨架构尚未验证。
+RP-13 额外验证（临时文件 SQLite，无宿主服务）：
+
+- 空库迁移到期望版本 1，重复执行幂等。
+- 已有 `rp_users`、无 `schema_migrations` 的旧库被采纳且用户行保留。
+- 人为篡改 migration checksum 后再次迁移被拒绝。
+- `VACUUM INTO` 备份目标通过 `integrity_check` 与 schema 版本校验，可独立打开并读出用户；已存在目标路径拒绝覆盖。
+
+构建和测试命令：`cargo test --locked --offline`；本批结果为 28 个测试全部通过（19 个库测试 + 9 个集成测试），既有站点/安装器与安全集成测试保留。系统级 TLS 部署、ACME 签发、完整浏览器回归和跨架构尚未验证。
 
 ## 接下来
 
-1. RP-13：版本化 schema 迁移与 SQLite 一致性热备，为用户、会话和权限迁移提供前置条件。
-2. RP-01 / RP-23：Argon2id、移除初始密码明文、JWT 最小身份、可撤销会话和登录限流。
-3. RP-03 / RP-06 / RP-07 / RP-09：资源权限、路径边界、受限 runner 与审计。
+1. RP-01 / RP-23：Argon2id、移除初始密码明文、JWT 最小身份、可撤销会话和登录限流（依赖本批迁移框架）。
+2. RP-03 / RP-06 / RP-07 / RP-09：资源权限、路径边界、受限 runner 与审计。
+3. RP-05 补齐一次性 SSE 票据；RP-11 补齐 audit/deny/SBOM/签名。
 
-未完成全部 M0 前，不把首批修复称为“生产安全已完成”。
+未完成全部 M0 前，不把已落地修复称为“生产安全已完成”。
