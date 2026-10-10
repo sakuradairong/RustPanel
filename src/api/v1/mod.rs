@@ -17,6 +17,7 @@ pub mod admin;
 pub mod process;
 pub mod firewall;
 pub mod webserver;
+pub mod sites;
 pub mod service;
 pub mod ssl;
 pub mod installer;

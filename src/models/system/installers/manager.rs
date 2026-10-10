@@ -61,6 +61,26 @@ impl OsManager {
         Ok(())
     }
 
+    pub async fn remove_packages(packages: &[&str]) -> Result<(), Box<dyn Error + Send + Sync>> {
+        let pm = Self::detect_package_manager();
+        let (cmd_name, remove_args) = match pm {
+            PackageManager::Yum => ("yum", vec!["remove", "-y"]),
+            PackageManager::Apt => ("apt-get", vec!["remove", "-y"]),
+            PackageManager::Unknown => return Err("Unsupported OS or Package Manager".into()),
+        };
+
+        let status = Command::new(cmd_name)
+            .args(&remove_args)
+            .args(packages)
+            .status()
+            .await?;
+
+        if !status.success() {
+            return Err(format!("Failed to remove packages: {:?}", packages).into());
+        }
+        Ok(())
+    }
+
     pub async fn create_user(username: &str, shell: &str) -> Result<(), Box<dyn Error + Send + Sync>> {
          // Check if user exists
          let status = Command::new("id").arg(username).status().await;
