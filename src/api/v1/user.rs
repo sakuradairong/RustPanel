@@ -7,9 +7,16 @@
  * @FilePath: \RustPanel\src\api\v1\user.rs
  */
 
-use actix_web::HttpResponse;
+use actix_web::{web, HttpResponse, ResponseError};
+use diesel::prelude::*;
+use serde::Deserialize;
 
 use crate::api::auth::AuthUser;
+use crate::api::{ResponseStructure, ResponseStructureError};
+use crate::models::structure::schema::rp_users;
+use crate::service::db::DBPool;
+use crate::service::password::{self, ALGO_ARGON2ID};
+use crate::service::sessions;
 
 pub async fn get_me(user: AuthUser) -> HttpResponse {
     HttpResponse::Ok().json(serde_json::json!({
@@ -17,7 +24,82 @@ pub async fn get_me(user: AuthUser) -> HttpResponse {
         "username": user.username,
         "authority": user.authority,
         "created_at": user.created_at,
+        "must_change_password": user.must_change_password,
     }))
+}
+
+#[derive(Deserialize)]
+pub struct ChangePasswordBody {
+    pub current_password: String,
+    pub new_password: String,
+}
+
+pub async fn change_password(
+    user: AuthUser,
+    pool: web::Data<DBPool>,
+    body: web::Json<ChangePasswordBody>,
+) -> HttpResponse {
+    if body.new_password.len() < 8 {
+        return ResponseStructureError::bad("New password must be at least 8 characters");
+    }
+    let user_id = user.id;
+    let current = body.current_password.clone();
+    let new_password = body.new_password.clone();
+    match web::block(move || {
+        let mut conn = pool.get().map_err(|_| {
+            crate::errors::common::CommonError::ServiceUnavailable(
+                "Database unavailable".into(),
+            )
+        })?;
+        let row: crate::models::structure::rp_users::Users = rp_users::table
+            .find(user_id)
+            .first(&mut *conn)
+            .map_err(|_| {
+                crate::errors::common::CommonError::Unauthorized("Invalid credentials".into())
+            })?;
+        let (ok, _) = password::verify_stored(
+            &row.password,
+            &row.salt,
+            &row.password_algo,
+            &current,
+        )
+        .map_err(|_| {
+            crate::errors::common::CommonError::InternalServerError("Password verify failed".into())
+        })?;
+        if !ok {
+            return Err(crate::errors::common::CommonError::Unauthorized(
+                "Current password is incorrect".into(),
+            ));
+        }
+        let hash = password::hash_argon2id(&new_password).map_err(|_| {
+            crate::errors::common::CommonError::InternalServerError("Failed to hash password".into())
+        })?;
+        diesel::update(rp_users::table.find(user_id))
+            .set((
+                rp_users::password.eq(&hash),
+                rp_users::salt.eq(""),
+                rp_users::password_algo.eq(ALGO_ARGON2ID),
+                rp_users::must_change_password.eq(0),
+            ))
+            .execute(&mut *conn)
+            .map_err(|e| {
+                crate::errors::common::CommonError::InternalServerError(e.to_string())
+            })?;
+        let _ = sessions::bump_token_version(&mut conn, user_id);
+        let _ = sessions::revoke_all_for_user(&mut conn, user_id);
+        Ok(())
+    })
+    .await
+    {
+        Ok(Ok(())) => HttpResponse::Ok().json(ResponseStructure {
+            success: true,
+            code: 200,
+            message: String::from("password updated; please sign in again"),
+            data: Some(serde_json::json!({"ok": true})),
+        }),
+        Ok(Err(err)) => err.error_response(),
+        Err(_) => ResponseStructureError::internal("Password change unavailable"),
+    }
 }
 
 pub async fn get_menus(_: AuthUser) -> HttpResponse {

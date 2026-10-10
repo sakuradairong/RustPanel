@@ -76,4 +76,6 @@ EnvironmentFile=/etc/rustpanel/security.env
 
 自 RP-05 起：schema 版本 **6**；监控 SSE 使用 `POST /api/v1/monitor/tickets` 签发的一次性短票据（`?ticket=`），禁止把长期 JWT 放进 EventSource URL；活动流会周期检测账号禁用并结束推送。
 
-这些保护尚不覆盖备份恢复 CLI 与全部宿主命令面迁入 runner。生产准入继续按开发文档的全部 M0 条件验收。
+自 RP-10 起：默认示例监听 `127.0.0.1`；向非 loopback 明文绑定会拒启，除非配置 `RP_TLS_CERT`+`RP_TLS_KEY` 或显式 `RP_ALLOW_INSECURE_PUBLIC_BIND=1`。会话 cookie 使用 `HttpOnly` + `SameSite=Lax`，并在非 loopback/TLS 场景推荐 `Secure`（可用 `RP_COOKIE_SECURE` 覆盖）。带 session cookie 的写请求需匹配的 `Origin`/`Referer`。首启 `must_change_password` 用户除 `/user/me`、改密、登出外返回 403；改密接口为 `POST /api/v1/user/change-password`。
+
+这些保护尚不覆盖备份恢复 CLI、进程内 rustls 终结与全部宿主命令面迁入 runner。生产准入继续按开发文档的全部 M0 条件验收。
