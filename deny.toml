@@ -14,15 +14,16 @@ feature-depth = 1
 [advisories]
 yanked = "deny"
 # Tracked follow-ups: replace rust-crypto (crypto cleanup), bump reqwest/h2.
+# Every ignore carries an expiry date; cargo-deny fails the build past it.
 ignore = [
-    { id = "RUSTSEC-2016-0005", reason = "rust-crypto unmaintained; migration tracked after M0 auth stack (used for legacy SHA helpers)" },
-    { id = "RUSTSEC-2022-0011", reason = "rust-crypto AES advisory; panel password path uses argon2, not this AES" },
-    { id = "RUSTSEC-2022-0004", reason = "rustc-serialize via rust-crypto; not used for untrusted JSON ingest" },
-    { id = "RUSTSEC-2025-0025", reason = "rustc-serialize unmaintained via rust-crypto; same removal track" },
-    { id = "RUSTSEC-2020-0071", reason = "time 0.1 via rust-crypto; not calling local-offset APIs from panel code" },
-    { id = "RUSTSEC-2025-0121", reason = "gcc crate unmaintained transitive build dep" },
-    { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile via reqwest 0.11; bump reqwest in follow-up" },
-    { id = "RUSTSEC-2026-0258", reason = "h2 via reqwest 0.11; bump HTTP stack in follow-up" },
+    { id = "RUSTSEC-2016-0005", reason = "rust-crypto unmaintained; migration tracked after M0 auth stack (used for legacy SHA helpers)", expired = "2027-03-31" },
+    { id = "RUSTSEC-2022-0011", reason = "rust-crypto AES advisory; panel password path uses argon2, not this AES", expired = "2027-03-31" },
+    { id = "RUSTSEC-2022-0004", reason = "rustc-serialize via rust-crypto; not used for untrusted JSON ingest", expired = "2027-03-31" },
+    { id = "RUSTSEC-2025-0025", reason = "rustc-serialize unmaintained via rust-crypto; same removal track", expired = "2027-03-31" },
+    { id = "RUSTSEC-2020-0071", reason = "time 0.1 via rust-crypto; not calling local-offset APIs from panel code", expired = "2027-03-31" },
+    { id = "RUSTSEC-2025-0121", reason = "gcc crate unmaintained transitive build dep", expired = "2027-03-31" },
+    { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile via reqwest 0.11; bump reqwest in follow-up", expired = "2027-03-31" },
+    { id = "RUSTSEC-2026-0258", reason = "h2 via reqwest 0.11; bump HTTP stack in follow-up", expired = "2027-03-31" },
 ]
 
 [licenses]

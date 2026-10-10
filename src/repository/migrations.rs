@@ -287,10 +287,26 @@ pub fn user_count(pool: &DBPool) -> Result<i64, MigrationError> {
     Ok(rows.first().map(|row| row.count).unwrap_or(0))
 }
 
+/// Percent-encode the characters SQLite URI filenames treat specially
+/// (`%`, `?`, `#`) so paths containing them open the intended file.
+fn encode_sqlite_uri_path(path: &Path) -> String {
+    let raw = path.to_string_lossy();
+    let mut encoded = String::with_capacity(raw.len());
+    for ch in raw.chars() {
+        match ch {
+            '%' => encoded.push_str("%25"),
+            '?' => encoded.push_str("%3F"),
+            '#' => encoded.push_str("%23"),
+            _ => encoded.push(ch),
+        }
+    }
+    encoded
+}
+
 /// Open a SQLite file read-only and confirm integrity plus expected schema version.
 pub fn verify_database_file(path: &Path) -> Result<i64, MigrationError> {
     use diesel::Connection;
-    let uri = format!("file:{}?mode=ro", path.display());
+    let uri = format!("file:{}?mode=ro", encode_sqlite_uri_path(path));
     let mut conn = SqliteConnection::establish(&uri)
         .map_err(|err| MigrationError::new(format!("Failed to open database for verification: {err}")))?;
 

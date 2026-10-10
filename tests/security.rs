@@ -624,3 +624,73 @@ async fn disabling_and_deleting_users_leaves_no_active_sessions() {
     );
     let _ = SessionRow { revoked_at: None };
 }
+
+#[actix_web::test]
+async fn log_read_is_bounded_to_log_roots() {
+    let (_file, pool) = database(true);
+    let app = actix_test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool.clone()))
+            .service(api::route::v1()),
+    )
+    .await;
+    let bearer = token_for(&pool, 1, 0, 3600);
+
+    // Point the log roots at a temp dir for this test.
+    let log_dir = std::env::temp_dir().join("rp-log-test");
+    std::fs::create_dir_all(&log_dir).unwrap();
+    std::fs::write(log_dir.join("panel.log"), "line-one\nline-two\n").unwrap();
+    std::env::set_var("RP_LOG_ROOTS", log_dir.to_str().unwrap());
+
+    // Arbitrary absolute paths outside the log roots are refused.
+    for path in ["/etc/passwd", "/etc/shadow", "/root/.ssh/id_rsa"] {
+        let request = actix_test::TestRequest::get()
+            .uri(&format!("/api/v1/log/read?path={}", urlencode(path)))
+            .insert_header(("Authorization", format!("Bearer {bearer}")))
+            .to_request();
+        assert_eq!(
+            actix_test::call_service(&app, request).await.status(),
+            StatusCode::FORBIDDEN,
+            "log read outside roots: {path}"
+        );
+    }
+
+    // Traversal via .. is rejected by the bounds layer.
+    let request = actix_test::TestRequest::get()
+        .uri("/api/v1/log/read?path=/var/log/../../etc/passwd")
+        .insert_header(("Authorization", format!("Bearer {bearer}")))
+        .to_request();
+    assert_eq!(
+        actix_test::call_service(&app, request).await.status(),
+        StatusCode::FORBIDDEN,
+        "log read traversal"
+    );
+
+    // A real file under a log root reads fine.
+    let abs = log_dir.join("panel.log");
+    let request = actix_test::TestRequest::get()
+        .uri(&format!(
+            "/api/v1/log/read?path={}",
+            urlencode(abs.to_str().unwrap())
+        ))
+        .insert_header(("Authorization", format!("Bearer {bearer}")))
+        .to_request();
+    let response = actix_test::call_service(&app, request).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: serde_json::Value = actix_test::read_body_json(response).await;
+    assert_eq!(body["data"]["total"], 2);
+    std::fs::remove_dir_all(&log_dir).ok();
+}
+
+fn urlencode(value: &str) -> String {
+    let mut encoded = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' | b'/' => {
+                encoded.push(byte as char)
+            }
+            _ => encoded.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    encoded
+}
