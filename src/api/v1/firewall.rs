@@ -11,7 +11,7 @@ use actix_web::{web, HttpResponse, ResponseError};
 use serde::{Deserialize, Serialize};
 use crate::api::auth::AuthUser;
 use crate::api::{ResponseStructure, ResponseStructureError};
-use crate::privileged::{self, Action};
+use crate::privileged::{self, Action, AuditedError};
 use crate::service::db::DBPool;
 use crate::service::rbac::{self, PERM_FIREWALL_READ, PERM_FIREWALL_WRITE};
 
@@ -105,6 +105,24 @@ fn parse_iptables_rules(output: &str) -> Vec<IptablesRule> {
 
 fn runner_error_response(err: privileged::RunnerError) -> HttpResponse {
     if err.is_rejected() {
+        ResponseStructureError::forbidden(&err.message())
+    } else {
+        HttpResponse::InternalServerError().json(ResponseStructureError {
+            success: false,
+            code: 500,
+            message: err.message(),
+        })
+    }
+}
+
+fn audited_error_response(err: AuditedError) -> HttpResponse {
+    if err.is_unavailable() {
+        HttpResponse::ServiceUnavailable().json(ResponseStructureError {
+            success: false,
+            code: 503,
+            message: err.message(),
+        })
+    } else if err.is_rejected() {
         ResponseStructureError::forbidden(&err.message())
     } else {
         HttpResponse::InternalServerError().json(ResponseStructureError {
@@ -222,17 +240,18 @@ pub async fn add_iptables_rule(
         Ok(args) => args,
         Err(err) => return runner_error_response(err),
     };
-    match privileged::execute(privileged::runner::request_for(
+    match privileged::execute_audited(
+        pool.get_ref(),
         Some(user.id),
         Action::IptablesAppend {
             chain: body.chain.clone(),
             args,
         },
-    ))
+    )
     .await
     {
         Ok(result) => result_response(result),
-        Err(err) => runner_error_response(err),
+        Err(err) => audited_error_response(err),
     }
 }
 
@@ -245,13 +264,14 @@ pub async fn delete_iptables_rule(
     if let Err(err) = rbac::require_perm(pool.get_ref(), &user, PERM_FIREWALL_WRITE) {
         return err.error_response();
     }
-    match privileged::execute(privileged::runner::request_for(
+    match privileged::execute_audited(
+        pool.get_ref(),
         Some(user.id),
         Action::IptablesDelete {
             chain: path.chain.clone(),
             num: query.num,
         },
-    ))
+    )
     .await
     {
         Ok(result) if result.exit_code == Some(0) => HttpResponse::Ok().json(ResponseStructure {
@@ -268,7 +288,7 @@ pub async fn delete_iptables_rule(
             code: 500,
             message: result.stderr.trim().to_string(),
         }),
-        Err(err) => runner_error_response(err),
+        Err(err) => audited_error_response(err),
     }
 }
 
@@ -283,14 +303,15 @@ pub async fn enable_port(
     let protocol = body.protocol.clone().unwrap_or_else(|| "tcp".into());
     let jump = body.action.clone().unwrap_or_else(|| "ACCEPT".into());
 
-    match privileged::execute(privileged::runner::request_for(
+    match privileged::execute_audited(
+        pool.get_ref(),
         Some(user.id),
         Action::IptablesAllowPort {
             port: body.port,
             protocol,
             jump,
         },
-    ))
+    )
     .await
     {
         Ok(result) if result.exit_code == Some(0) => HttpResponse::Ok().json(ResponseStructure {
@@ -307,6 +328,6 @@ pub async fn enable_port(
             code: 500,
             message: result.stderr.trim().to_string(),
         }),
-        Err(err) => runner_error_response(err),
+        Err(err) => audited_error_response(err),
     }
 }

@@ -34,7 +34,7 @@
 
 要点：
 
-- Schema 期望版本在 RP-23 时为 **3**；RP-03 起为 **4**。
+- Schema 期望版本在 RP-23 时为 **3**；RP-03 为 **4**；RP-09 起为 **5**。
 - 旧版把 password 哈希放进 JWT `sub` 的令牌不再被接受，用户需重新登录。
 - 访问令牌不再包含口令字段。
 
@@ -74,13 +74,20 @@
 - Viewer 对 installer install、nginx 建站、firewall 规则写、file save 返回 403。
 - 文件路径：`..`/根外路径/软链逃逸 403；受管根内 list 与原子写单测通过。
 - Runner：参数注入拒绝；超时杀进程；firewall HTTP 注入 403。
+- 审计：intent 落库后才执行；params 脱敏；outbox 可 delivered/retry。
 
-构建和测试命令：`cargo test --locked`；本批结果为 52 个测试全部通过（36 个库测试 + 16 个集成测试）。系统级 TLS、ACME、浏览器回归和跨架构尚未验证。
+构建和测试命令：`cargo test --locked`；本批结果为 55 个测试全部通过（39 个库测试 + 16 个集成测试）。系统级 TLS、ACME、浏览器回归和跨架构尚未验证。
+
+## 第八批：RP-09 审计 intent / outbox / 脱敏
+
+| 任务 | 状态 | 本次实现 | 后续边界 |
+| --- | --- | --- | --- |
+| RP-09 审计 intent/outbox/脱敏 | 已实现并验证 | 迁移 `005_audit`：`audit_intents`/`audit_events`/`audit_outbox`；高危动作先持久化 intent，失败则 503 拒绝执行；params/detail 脱敏；结果入 outbox 可重投；firewall/service 经 `execute_audited`，file save 挂 intent | 异步投递 worker、installer/ssl/docker 全覆盖、PTY 会话录制属后续 |
 
 ## 接下来
 
-1. RP-09：审计 intent/outbox/脱敏。
-2. RP-05 补齐一次性 SSE 票据；RP-10 TLS/bootstrap/CSRF；RP-11 audit/deny/SBOM。
-3. RP-23 增强：refresh 轮换与会话过期清理任务；RP-07 后续：socket runner / 降权部署。
+1. RP-05 补齐一次性 SSE 票据；RP-10 TLS/bootstrap/CSRF；RP-11 audit/deny/SBOM。
+2. RP-08 秘密存储；RP-07 后续：socket runner / 降权部署。
+3. RP-23 增强：refresh 轮换与会话过期清理任务。
 
 未完成全部 M0 前，不把已落地修复称为“生产安全已完成”。

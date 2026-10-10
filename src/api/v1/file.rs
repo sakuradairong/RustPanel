@@ -1,12 +1,15 @@
 use crate::api::auth::AuthUser;
 use crate::api::{ResponseStructure, ResponseStructureError};
+use crate::audit::{self, IntentSpec, Outcome};
 use crate::models::file::{self, SaveData};
+use crate::privileged::runner;
 use crate::service::db::DBPool;
 use crate::service::path_bounds::{self, FileRootConfig, PathBoundError};
 use crate::service::rbac::{self, PERM_FILE_READ, PERM_FILE_WRITE};
 
 use actix_web::{web, HttpResponse, ResponseError};
 use serde::Deserialize;
+use serde_json::json;
 use std::path::PathBuf;
 
 #[derive(Deserialize)]
@@ -69,18 +72,67 @@ pub async fn save(
         Ok(bound) => bound,
         Err(err) => return path_error_response(err),
     };
+    let path_display = bound.absolute.to_string_lossy().into_owned();
+    let operation_id = runner::new_operation_id();
+    let intent = match audit::begin_intent(
+        pool.get_ref(),
+        IntentSpec {
+            operation_id: operation_id.clone(),
+            actor_id: Some(user.id),
+            request_id: None,
+            action: "file.save".into(),
+            resource: Some(path_display.clone()),
+            params: json!({
+                "path": path_display,
+                "content": data.content,
+            }),
+            ip: None,
+        },
+    ) {
+        Ok(intent) => intent,
+        Err(err) => {
+            return HttpResponse::ServiceUnavailable().json(ResponseStructureError {
+                success: false,
+                code: 503,
+                message: err.message().to_string(),
+            });
+        }
+    };
     match file::save_bounded(bound, data.into_inner().content) {
-        Ok(_) => HttpResponse::Ok().json(ResponseStructure {
-            success: true,
-            code: 200,
-            message: String::from("success"),
-            data: Some("ok"),
-        }),
-        Err(err) => HttpResponse::InternalServerError().json(ResponseStructureError {
-            success: false,
-            code: 500,
-            message: err.to_string(),
-        }),
+        Ok(_) => {
+            let _ = audit::complete_intent(
+                pool.get_ref(),
+                &intent,
+                Outcome::Success,
+                Some(0),
+                json!({"ok": true}),
+                None,
+            );
+            HttpResponse::Ok().json(ResponseStructure {
+                success: true,
+                code: 200,
+                message: String::from("success"),
+                data: Some(serde_json::json!({
+                    "ok": true,
+                    "operation_id": operation_id,
+                })),
+            })
+        }
+        Err(err) => {
+            let _ = audit::complete_intent(
+                pool.get_ref(),
+                &intent,
+                Outcome::Failure,
+                None,
+                json!({"error": err.to_string()}),
+                None,
+            );
+            HttpResponse::InternalServerError().json(ResponseStructureError {
+                success: false,
+                code: 500,
+                message: err.to_string(),
+            })
+        }
     }
 }
 
