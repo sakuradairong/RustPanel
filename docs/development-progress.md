@@ -55,6 +55,17 @@
 - 未配置时默认受管根为 `/www` 与 `/var/www`（不是 `/`）；`RP_FILE_EXPERT_MODE=1` 才允许以 `/` 为根。
 - 越界与软链逃逸返回 **403**（不再仅用 `contains("..")` 的 400）。
 
+## 第七批：RP-07 受限特权 runner
+
+| 任务 | 状态 | 本次实现 | 后续边界 |
+| --- | --- | --- | --- |
+| RP-07 受限 runner 与命令执行器 | 已实现并验证 | `src/privileged/`：动作白名单（iptables/ufw/systemctl）；参数校验拒 shell 元字符；`Command::new`+argv；超时+进程组 SIGKILL；输出上限；firewall 与 service 写路径经 runner；`operation_id` 追踪 | 独立二进制 + Unix socket/SO_PEERCRED、主进程降权与 Docker socket 隔离属部署/后续切片；installer/webserver/ssl 命令面可继续迁入 |
+
+要点：
+
+- 注入用例（`;`、`$()`、反引号、换行）在 runner 边界拒绝，不进入 shell。
+- job_id 可空；M1 队列（RP-12）再接入。审计 intent 持久化属 RP-09。
+
 ## 验证范围
 
 - 既有安全集成测试保留并改为会话 JWT：无凭据 SSL 401、角色 403、禁用/`token_version`/删除用户拒绝、登出后立即失效、池耗尽 503、缺密钥拒启。
@@ -62,13 +73,14 @@
 - 断言访问令牌字符串不含口令哈希。
 - Viewer 对 installer install、nginx 建站、firewall 规则写、file save 返回 403。
 - 文件路径：`..`/根外路径/软链逃逸 403；受管根内 list 与原子写单测通过。
+- Runner：参数注入拒绝；超时杀进程；firewall HTTP 注入 403。
 
-构建和测试命令：`cargo test --locked`；本批结果为 44 个测试全部通过（30 个库测试 + 14 个集成测试，含 file_bounds / TOCTOU 软链重开拒绝）。系统级 TLS、ACME、浏览器回归和跨架构尚未验证。
+构建和测试命令：`cargo test --locked`；本批结果为 52 个测试全部通过（36 个库测试 + 16 个集成测试）。系统级 TLS、ACME、浏览器回归和跨架构尚未验证。
 
 ## 接下来
 
-1. RP-07 / RP-09：受限 runner 与审计 intent/outbox。
+1. RP-09：审计 intent/outbox/脱敏。
 2. RP-05 补齐一次性 SSE 票据；RP-10 TLS/bootstrap/CSRF；RP-11 audit/deny/SBOM。
-3. RP-23 增强：refresh 轮换与会话过期清理任务。
+3. RP-23 增强：refresh 轮换与会话过期清理任务；RP-07 后续：socket runner / 降权部署。
 
 未完成全部 M0 前，不把已落地修复称为“生产安全已完成”。
