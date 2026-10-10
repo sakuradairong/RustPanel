@@ -95,11 +95,19 @@
 - 既有安全集成测试 + file_bounds / privileged_runner / 审计单测。
 - SSE：query JWT 401；票据一次性；错 stream 拒绝；兑换后复用 401。
 
-构建和测试命令：`cargo test --locked`；本批结果为 57 个测试全部通过（40 个库测试 + 17 个集成测试）。系统级 TLS、ACME、浏览器回归和跨架构尚未验证。
+构建和测试命令：`cargo test --locked`；本批结果见各后续批次。系统级 TLS、ACME、浏览器回归和跨架构尚未验证。
+
+## 第十批：RP-10 TLS / bootstrap / CSRF
+
+| 任务 | 状态 | 本次实现 | 后续边界 |
+| --- | --- | --- | --- |
+| RP-10 TLS/bootstrap/cookie/CSRF | 已实现并验证 | 非 loopback 明文绑定拒启（需 `RP_TLS_CERT`/`RP_TLS_KEY` 或 `RP_ALLOW_INSECURE_PUBLIC_BIND`）；cookie `Secure`/`HttpOnly`/`SameSite=Lax`；cookie 写请求 Origin/Referer CSRF；`must_change_password` 门禁 + `POST /user/change-password`；示例 host `127.0.0.1` | 进程内 rustls 终结、ACME 面板证书、security_dir 轮换 UI 仍可增强 |
+
+要点：测试累计 **63** 通过（44 库 + 19 集成）。
 
 ## 接下来
 
-1. RP-10 TLS/bootstrap/CSRF；RP-11 audit/deny/SBOM；RP-08 秘密存储。
+1. RP-11 audit/deny/SBOM；RP-08 秘密存储。
 2. RP-07 后续：socket runner / 降权部署。
 3. RP-23 增强：refresh 轮换与会话过期清理任务。
 

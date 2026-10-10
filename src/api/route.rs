@@ -29,6 +29,10 @@ pub fn v1() -> actix_web::Scope {
             .service(web::resource("/file/content").route(web::get().to(v1::file::content)))
             .service(web::resource("/file/save").route(web::post().to(v1::file::save)))
             .service(web::resource("/user/me").route(web::get().to(v1::user::get_me)))
+            .service(
+                web::resource("/user/change-password")
+                    .route(web::post().to(v1::user::change_password)),
+            )
             .service(web::resource("/user/menus").route(web::get().to(v1::user::get_menus)))
             .service(web::resource("/os_info").route(web::get().to(v1::os::os_info)))
             .service(

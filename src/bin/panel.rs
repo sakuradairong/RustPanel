@@ -8,7 +8,10 @@
  */
 use actix_files as fs;
 use actix_session::{config::PersistentSession, storage::CookieSessionStore, SessionMiddleware};
-use actix_web::{cookie::{time::Duration, Key}, get, web, Responder};
+use actix_web::{
+    cookie::{time::Duration, Key, SameSite},
+    get, web, Responder,
+};
 use diesel::{r2d2::ConnectionManager, SqliteConnection};
 use rust_panel::{
     api, common::sys::get_all_ip_addresses, errors::handlers, log_error, log_info, log_warn, models::user::find_user_by_id, service::{
@@ -64,10 +67,18 @@ async fn main() -> std::io::Result<()> {
     })?;
     let _ = test::demo(&pool).await;
 
+    if let Err(err) = rust_panel::service::bind_policy::validate_bind_host(&CONF.app.host) {
+        log_error!("{}", err);
+        std::process::exit(1);
+    }
+
     if !port_check::is_local_port_free(CONF.app.port) {
         log_error!("Error: The Port {} is already in use.", CONF.app.port);
         std::process::exit(1);
     }
+
+    let cookie_secure =
+        rust_panel::service::bind_policy::cookie_secure_recommended(&CONF.app.host);
 
     {
         println!("=========Listening AND Login address=========");
@@ -162,24 +173,17 @@ async fn main() -> std::io::Result<()> {
                 //.app_data(web::JsonConfig::default().limit(4096))
             .wrap(middleware::Logger::default())
             .wrap(middleware::Compress::default())
-            //.wrap(api::middleware::Auth)  
-            // .wrap(SessionMiddleware::builder(CookieSessionStore::default(),Key::generate())
-            // .session_lifecycle(
-            //     actix_session::config::PersistentSession::default()
-            //         .session_ttl(Duration::hours(CONF.app.session_ttl)),
-            // )
-            // .build())
-            //.wrap(IdentityMiddleware::default())
+            .wrap(api::csrf::CsrfProtect)
             .wrap(
                 SessionMiddleware::builder(
                     CookieSessionStore::default(),
                     Key::from(&SESSION_KEY[..]),
-                    //Key::generate()
                 )
                 .session_lifecycle(PersistentSession::default().session_ttl(Duration::hours(CONF.app.session_ttl)))
                 .cookie_name(String::from("token"))
-                .cookie_secure(false)
-                //.cookie_domain(Some(domain.clone()))
+                .cookie_secure(cookie_secure)
+                .cookie_http_only(true)
+                .cookie_same_site(SameSite::Lax)
                 .cookie_path(String::from("/"))
                 .build(),
             )

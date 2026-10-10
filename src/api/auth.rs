@@ -29,16 +29,18 @@ pub struct AuthUser {
     pub authority: String,
     pub created_at: chrono::NaiveDateTime,
     pub jti: String,
+    pub must_change_password: bool,
 }
 
-impl From<(SlimUser, String)> for AuthUser {
-    fn from((user, jti): (SlimUser, String)) -> Self {
+impl From<(SlimUser, String, bool)> for AuthUser {
+    fn from((user, jti, must_change_password): (SlimUser, String, bool)) -> Self {
         Self {
             id: user.id,
             username: user.username,
             authority: user.authority,
             created_at: user.created_at,
             jti,
+            must_change_password,
         }
     }
 }
@@ -78,7 +80,18 @@ pub(crate) fn authenticate_token(token: &str, pool: &DBPool) -> Result<AuthUser,
     if user.status != 0 || user.token_version != claims.ver {
         return Err(CommonError::Unauthorized("Invalid credentials".into()));
     }
-    Ok(AuthUser::from((user.into(), claims.jti)))
+    let must_change = user.must_change_password != 0;
+    Ok(AuthUser::from((user.into(), claims.jti, must_change)))
+}
+
+fn path_allows_must_change(path: &str) -> bool {
+    matches!(
+        path,
+        "/api/v1/user/me"
+            | "/api/v1/user/change-password"
+            | "/api/v1/login/logout"
+            | "/api/v1/login/security_dir"
+    )
 }
 
 impl FromRequest for AuthUser {
@@ -92,18 +105,26 @@ impl FromRequest for AuthUser {
             .and_then(|value| value.to_str().ok())
             .map(|value| value.strip_prefix("Bearer ").unwrap_or(value).to_owned());
         let pool = req.app_data::<web::Data<DBPool>>().cloned();
+        let path = req.path().to_string();
         Box::pin(async move {
             let token =
                 token.ok_or_else(|| CommonError::Unauthorized("Invalid credentials".into()))?;
             let pool = pool.ok_or_else(|| {
                 CommonError::ServiceUnavailable("Authentication database unavailable".into())
             })?;
-            web::block(move || authenticate_token(&token, pool.get_ref()))
+            let user = web::block(move || authenticate_token(&token, pool.get_ref()))
                 .await
                 .map_err(|_| {
                     CommonError::ServiceUnavailable("Authentication service unavailable".into())
                 })?
-                .map_err(Error::from)
+                .map_err(Error::from)?;
+            if user.must_change_password && !path_allows_must_change(&path) {
+                return Err(CommonError::Forbidden(
+                    "Password change required before continuing".into(),
+                )
+                .into());
+            }
+            Ok(user)
         })
     }
 }

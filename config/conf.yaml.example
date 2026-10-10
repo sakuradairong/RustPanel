@@ -1,5 +1,7 @@
 app:
-  host: 0.0.0.0
+  # Default to loopback. Public binds require TLS env (RP_TLS_CERT/RP_TLS_KEY)
+  # or explicit RP_ALLOW_INSECURE_PUBLIC_BIND=1.
+  host: 127.0.0.1
   port: 8080
   security_dir: dfhg156d1
   #session_ttl hours
