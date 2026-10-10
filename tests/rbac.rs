@@ -161,6 +161,22 @@ async fn viewer_is_forbidden_from_docker_and_process_writes() {
             actix_test::TestRequest::post().uri("/api/v1/process/kill/99999"),
             "process kill",
         ),
+        (
+            actix_test::TestRequest::post()
+                .uri("/api/v1/docker/containers/abc123/exec")
+                .set_json(serde_json::json!({"cmd":"id"})),
+            "docker exec",
+        ),
+        (
+            actix_test::TestRequest::post()
+                .uri("/api/v1/docker/images/prune")
+                .set_json(serde_json::json!({"dangling_only":true})),
+            "docker image prune",
+        ),
+        (
+            actix_test::TestRequest::post().uri("/api/v1/docker/volumes/prune"),
+            "docker volume prune",
+        ),
     ];
 
     for (builder, label) in forbidden {

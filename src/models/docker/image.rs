@@ -1,7 +1,10 @@
 use bollard::models::ImageSummary;
-use bollard::query_parameters::{CreateImageOptions, ListImagesOptions, RemoveImageOptions};
-use serde::{Deserialize, Serialize};
+use bollard::query_parameters::{
+    CreateImageOptions, ListImagesOptions, PruneImagesOptionsBuilder, RemoveImageOptions,
+};
 use futures_util::StreamExt;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::error::Error;
 
 use super::docker;
@@ -66,4 +69,35 @@ pub async fn remove(image_id: &str) -> Result<(), Box<dyn Error + Send + Sync>> 
     let options = RemoveImageOptions { force: true, ..Default::default() };
     client.remove_image(image_id, Some(options), None).await?;
     Ok(())
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct PruneResult {
+    pub deleted: usize,
+    pub space_reclaimed: i64,
+}
+
+/// Prune unused images. When `dangling_only` is true, only dangling images are removed.
+pub async fn prune(dangling_only: bool) -> Result<PruneResult, Box<dyn Error + Send + Sync>> {
+    let client = docker()?;
+    let options = if dangling_only {
+        let mut filters = HashMap::new();
+        filters.insert("dangling", vec!["true"]);
+        Some(
+            PruneImagesOptionsBuilder::default()
+                .filters(&filters)
+                .build(),
+        )
+    } else {
+        None
+    };
+    let resp = client.prune_images(options).await?;
+    Ok(PruneResult {
+        deleted: resp
+            .images_deleted
+            .as_ref()
+            .map(|v| v.len())
+            .unwrap_or(0),
+        space_reclaimed: resp.space_reclaimed.unwrap_or(0),
+    })
 }
