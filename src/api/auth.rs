@@ -18,67 +18,64 @@ use crate::{
 use actix_web::{dev::Payload, web, Error, FromRequest, HttpRequest};
 use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
-use std::future::{ready, Ready};
+use std::{future::Future, pin::Pin};
 
 // we need the same data
 // simple aliasing makes the intentions clear and its more readable
 pub type AuthUser = SlimUser;
 
+/// Resolve identity against current database state, including role and disabled status.
+/// Legacy JWT payloads remain accepted during the upcoming session/schema migration.
+pub(crate) fn authenticate_token(token: &str, pool: &DBPool) -> Result<AuthUser, CommonError> {
+    let claims = decode_jwt(token)
+        .map_err(|_| CommonError::Unauthorized("Invalid credentials".into()))?;
+    let subject: SlimUser = serde_json::from_str(&claims.sub)
+        .map_err(|_| CommonError::Unauthorized("Invalid credentials".into()))?;
+    let user = find_user_by_id(subject.id, pool)
+        .map_err(|_| CommonError::ServiceUnavailable("Authentication database unavailable".into()))?
+        .ok_or_else(|| CommonError::Unauthorized("Invalid credentials".into()))?;
+    if user.status != 0 || user.password != subject.password {
+        return Err(CommonError::Unauthorized("Invalid credentials".into()));
+    }
+    // Never authorize using a stale role from the JWT.
+    Ok(user.into())
+}
+
 impl FromRequest for AuthUser {
     type Error = Error;
-    type Future = Ready<Result<AuthUser, Error>>;
+    type Future = Pin<Box<dyn Future<Output = Result<AuthUser, Error>>>>;
 
     fn from_request(req: &HttpRequest, _: &mut Payload) -> Self::Future {
+        let token = req.headers().get("Authorization")
+            .and_then(|value| value.to_str().ok())
+            .map(|value| value.strip_prefix("Bearer ").unwrap_or(value).to_owned());
+        let pool = req.app_data::<web::Data<DBPool>>().cloned();
+        Box::pin(async move {
+            let token = token.ok_or_else(|| CommonError::Unauthorized("Invalid credentials".into()))?;
+            let pool = pool.ok_or_else(|| CommonError::ServiceUnavailable("Authentication database unavailable".into()))?;
+            web::block(move || authenticate_token(&token, pool.get_ref()))
+                .await
+                .map_err(|_| CommonError::ServiceUnavailable("Authentication service unavailable".into()))?
+                .map_err(Error::from)
+        })
+    }
+}
 
-        match req.headers().get("Authorization") {
-            Some(token) => {
-                if let Ok(token_str) = token.to_str() {
-                    // strip "Bearer " prefix if present
-                    let jwt_str = if let Some(stripped) = token_str.strip_prefix("Bearer ") {
-                        stripped
-                    } else {
-                        token_str
-                    };
-                    if let Ok(claims) = decode_jwt(jwt_str) {
-                        // decoding tokens and obtaining user information
-                        if let Ok(user) = serde_json::from_str::<SlimUser>(&claims.sub) {
-                            if let Some(pool) = req.app_data::<web::Data<DBPool>>() {
-                                if let Ok(db_user) = find_user_by_id(
-                                    user.id,
-                                    &pool.clone(),
-                                )
-                                .map_err(|_| CommonError::InternalServerError(String::from("db error")))
-                                {
-                                    if let Some(db_user) = db_user {
-                                        if db_user.password != user.password {
-                                            return ready(Err(CommonError::Unauthorized(
-                                                String::from("password error"),
-                                            )
-                                            .into()));
-                                        }
-                                    } else {
-                                        return ready(Err(CommonError::Unauthorized(String::from("user not found")).into()));
-                                    }
-                                }
-                            } else {
-                                return ready(Err(CommonError::InternalServerError(String::from("DBPool not found")).into()));
-                            }
-                            return ready(Ok(user));
-                        }
-                    }
-                }
-            }
-            None => {
-                return ready(Err(
-                    CommonError::Unauthorized(String::from("token is None")).into()
-                ));
-            }
-        }
-        //verify decode_jwt
+/// Temporary coarse authorization until the resource-scoped RBAC migration lands.
+pub struct AdminUser;
 
-        ready(Err(
-            CommonError::Unauthorized(String::from("token error")).into()
-        ))
+impl FromRequest for AdminUser {
+    type Error = Error;
+    type Future = Pin<Box<dyn Future<Output = Result<Self, Error>>>>;
+
+    fn from_request(req: &HttpRequest, payload: &mut Payload) -> Self::Future {
+        let user = AuthUser::from_request(req, payload);
+        Box::pin(async move {
+            if user.await?.authority != "admin" {
+                return Err(CommonError::Forbidden("Administrator access required".into()).into());
+            }
+            Ok(Self)
+        })
     }
 }
 

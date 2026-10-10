@@ -8,6 +8,8 @@
 > RustPanel 为 Apache-2.0，1Panel 为 GPLv3；参考产品行为并独立实现，引入第三方代码时单独审查许可证。
 > 入口：[项目仓库](https://github.com/sakuradairong/RustPanel) · [GitHub Projects](https://github.com/sakuradairong/RustPanel/projects) · [证据索引](#k4-引用索引)
 
+实施状态与部署前提见[开发进度](development-progress.md)和[安全密钥配置](security-bootstrap.md)。本文保留原代码基线，避免把规划误当作最新实现状态。
+
 读者导航：
 
 - 产品范围和现状：A、B。

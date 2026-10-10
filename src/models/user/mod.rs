@@ -20,7 +20,7 @@ use r2d2::PooledConnection;
 pub fn find_user_by_id(user_id: i32, pool: &DBPool) -> Result<Option<Users>, CommonError> {
     let mut conn = pool
         .get()
-        .expect("Failed to get a connection from the pool");
+        .map_err(|_| CommonError::ServiceUnavailable("Authentication database unavailable".into()))?;
 
     // 使用Diesel查询特定ID的用户
     let user_data = rp_users::table

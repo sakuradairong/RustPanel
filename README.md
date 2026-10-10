@@ -33,3 +33,9 @@ This is a new generation server panel developed based on Rust.It is capable of m
 |OpenApi|`You can manage it yourself by using APIs`
 |Plugins|`Plugins that support Rust, Go, C, and C++development will be implemented`
 |Multilingual|`English、Chinese`
+
+## Security keys and development status
+
+The panel now requires independent instance keys in `RP_SECRET_KEY` (at least 32 bytes) and `RP_SESSION_KEY` (at least 64 bytes). Missing, short, identical, or formerly published default keys stop startup. The YAML `app.secret_key` is not the JWT key source.
+
+See [key setup and upgrade notes](docs/security-bootstrap.md), the [development plan](docs/development-plan.md), and [implementation progress](docs/development-progress.md). The first security batch is implemented; the remaining production prerequisites are still in progress.

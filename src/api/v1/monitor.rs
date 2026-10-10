@@ -6,7 +6,7 @@
  * @LastEditTime: 2024-05-25 16:23:02
  * @FilePath: \RustPanel\src\api\v1\monitor.rs
  */
-use actix_web::{web, HttpRequest, HttpResponse};
+use actix_web::{web, HttpRequest, HttpResponse, ResponseError};
 use futures_util::stream::Stream;
 use lazy_static::lazy_static;
 use serde::Serialize;
@@ -144,15 +144,22 @@ pub async fn monitor_sse(req: HttpRequest) -> HttpResponse {
                 .and_then(|params| params.get("token").cloned())
         });
 
-    // Validate token by attempting to decode it
-    if let Some(token_str) = token {
-        if crate::api::auth::decode_jwt(&token_str).is_ok() {
-            return HttpResponse::Ok()
+    if let Some(token) = token {
+        let Some(pool) = req.app_data::<web::Data<crate::service::db::DBPool>>().cloned() else {
+            return crate::errors::common::CommonError::ServiceUnavailable(
+                "Authentication database unavailable".into(),
+            ).error_response();
+        };
+        match web::block(move || crate::api::auth::authenticate_token(&token, pool.get_ref())).await {
+            Ok(Ok(_)) => return HttpResponse::Ok()
                 .insert_header(("Content-Type", "text/event-stream"))
                 .insert_header(("Cache-Control", "no-cache"))
                 .insert_header(("Connection", "keep-alive"))
-                .insert_header(("Access-Control-Allow-Origin", "*"))
-                .streaming(monitor_stream());
+                .streaming(monitor_stream()),
+            Ok(Err(error)) => return error.error_response(),
+            Err(_) => return crate::errors::common::CommonError::ServiceUnavailable(
+                "Authentication service unavailable".into(),
+            ).error_response(),
         }
     }
 

@@ -198,6 +198,9 @@ fn query(auth_data: LoginAuthData, pool: web::Data<DBPool>) -> Result<AuthUser, 
     //     .first::<Users>(&mut *conn);
 
     if let Some(user) = items.pop() {
+        if user.status != 0 {
+            return Err(CommonError::Unauthorized("Invalid credentials".into()));
+        }
         if user.error_count >= 5 {
             diesel::update(rp_users.find(user.id))
                 .set(status.eq(-1))
@@ -226,4 +229,37 @@ fn query(auth_data: LoginAuthData, pool: web::Data<DBPool>) -> Result<AuthUser, 
         }
     }
     Err(CommonError::BadRequest(String::from(t!("auth.login.username_error"))).into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{query, LoginAuthData};
+    use crate::{common::fun::sha1_salt, errors::common::CommonError, service::db::DBPool};
+    use actix_web::web;
+    use diesel::{connection::SimpleConnection, r2d2::ConnectionManager, SqliteConnection};
+
+    #[test]
+    fn disabled_account_cannot_log_in_with_the_correct_password() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let pool = DBPool::builder().max_size(1)
+            .build(ConnectionManager::<SqliteConnection>::new(file.path().to_str().unwrap())).unwrap();
+        let password_hash = sha1_salt("test-password".into(), "test-salt".into());
+        pool.get().unwrap().batch_execute(&format!(
+            "CREATE TABLE rp_users (
+                id INTEGER PRIMARY KEY, username TEXT NOT NULL, password TEXT NOT NULL,
+                salt TEXT NOT NULL, initial_password TEXT NOT NULL, authority TEXT NOT NULL,
+                error_count INTEGER NOT NULL, status INTEGER NOT NULL,
+                created_at TIMESTAMP NOT NULL, updated_at TIMESTAMP NOT NULL
+            ); INSERT INTO rp_users VALUES (
+                1, 'test-user', '{password_hash}', 'test-salt', '', 'user', 0, -1,
+                '2026-10-10 00:00:00', '2026-10-10 00:00:00'
+            );"
+        )).unwrap();
+        let credentials = || LoginAuthData {
+            username: "test-user".into(), password: "test-password".into(), timestamp: 0,
+        };
+        assert!(matches!(query(credentials(), web::Data::new(pool.clone())), Err(CommonError::Unauthorized(_))));
+        pool.get().unwrap().batch_execute("UPDATE rp_users SET status=0").unwrap();
+        assert!(query(credentials(), web::Data::new(pool)).is_ok());
+    }
 }

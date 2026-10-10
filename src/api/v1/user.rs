@@ -12,7 +12,12 @@ use actix_web::HttpResponse;
 use crate::api::auth::AuthUser;
 
 pub async fn get_me(user: AuthUser) -> HttpResponse {
-    HttpResponse::Ok().json(user)
+    HttpResponse::Ok().json(serde_json::json!({
+        "id": user.id,
+        "username": user.username,
+        "authority": user.authority,
+        "created_at": user.created_at,
+    }))
 }
 
 pub async fn get_menus(_: AuthUser) -> HttpResponse {

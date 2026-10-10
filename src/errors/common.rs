@@ -27,6 +27,12 @@ pub enum CommonError {
 
     #[display(fmt = "Unauthorized")]
     Unauthorized(String),
+
+    #[display(fmt = "Forbidden")]
+    Forbidden(String),
+
+    #[display(fmt = "Service Unavailable")]
+    ServiceUnavailable(String),
 }
 
 // impl ResponseError trait allows to convert our errors into http responses with appropriate data
@@ -50,6 +56,18 @@ impl ResponseError for CommonError {
                     success: false,
                     code: 400,
                     message: String::from(message),
+                }),
+            CommonError::ServiceUnavailable(ref message) => HttpResponse::ServiceUnavailable()
+                .json(ResponseStructureError {
+                    success: false,
+                    code: 503,
+                    message: message.clone(),
+                }),
+            CommonError::Forbidden(ref message) => HttpResponse::Forbidden()
+                .json(ResponseStructureError {
+                    success: false,
+                    code: 403,
+                    message: message.clone(),
                 }),
             CommonError::Unauthorized(ref message) => HttpResponse::Unauthorized()
                 .json(ResponseStructureError {

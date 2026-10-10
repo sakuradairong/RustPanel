@@ -2,6 +2,7 @@
 name = "rust-panel"
 version = "0.0.1"
 edition = "2021"
+rust-version = "1.88"
 authors = ["Wynters <wyn.devs@gmail.com>"]
 license = "apache-2.0"
 include = [
@@ -36,7 +37,7 @@ chrono = { version = "0", features = ["serde"] }
 actix-session =  { version = "0", features = ["cookie-session"] }
 diesel = { version = "2", features = ["sqlite", "r2d2", "chrono"] }
 ureq = { version = "2", features = ["json", "charset"] }
-sysinfo="0"
+sysinfo = "0.33.1"
 os_info = { version = "3"}
 sys-info = "0.9"
 jsonwebtoken = "9.3.0"
@@ -60,7 +61,7 @@ rust-i18n = "3"
 base64 = "0.22"
 encoding_rs = "0.8.34"
 gmsm = "0.1"
-bollard = "*"
+bollard = "0.21.1"
 reqwest = { version = "0.11", features = ["blocking", "json", "stream", "multipart"] }
 flate2 = "1.0"
 tar = "0.4"

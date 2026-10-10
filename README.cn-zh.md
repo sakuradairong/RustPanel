@@ -33,3 +33,9 @@ _语言: 中文, [English](README.md)
 |开放API|`您可以使用API自行管理`
 |插件|`将实现支持Rust、Go、C和C++开发的插件`
 |国际化|`中文、英语`
+
+## 安全密钥与开发进度
+
+面板现在要求配置独立的实例密钥：`RP_SECRET_KEY`（至少 32 字节）和 `RP_SESSION_KEY`（至少 64 字节）。缺失、过短、相同或沿用曾公开的默认值都会拒绝启动。YAML 中的 `app.secret_key` 不是 JWT 密钥来源。
+
+参见[密钥配置及升级说明](docs/security-bootstrap.md)、[开发方案](docs/development-plan.md)和[实施进度](docs/development-progress.md)。首批安全修复已实施，其余生产准入项仍待开发和验收。

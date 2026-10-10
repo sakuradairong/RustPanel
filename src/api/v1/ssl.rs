@@ -164,7 +164,7 @@ struct SetupStatus {
 }
 
 /// POST /api/v1/ssl/setup — ensure certbot is installed, installing it if necessary
-pub async fn setup_certbot() -> HttpResponse {
+pub async fn setup_certbot(_: crate::api::auth::AdminUser) -> HttpResponse {
     // Force install attempt regardless of current state
     let _ = tokio::fs::create_dir_all(MANAGED_CERTBOT_DIR).await;
     let venv_dir = format!("{}/venv", MANAGED_CERTBOT_DIR);
@@ -327,7 +327,7 @@ async fn enrich_cert_with_openssl(info: &mut CertInfo) {
 // ── Endpoints ──
 
 /// GET /api/v1/ssl/providers — list available ACME providers
-pub async fn list_acme_providers() -> HttpResponse {
+pub async fn list_acme_providers(_: crate::api::auth::AuthUser) -> HttpResponse {
     HttpResponse::Ok().json(ResponseStructure {
         success: true,
         code: 200,
@@ -340,7 +340,7 @@ pub async fn list_acme_providers() -> HttpResponse {
 }
 
 /// GET /api/v1/ssl/accounts — list ACME accounts
-pub async fn list_acme_accounts() -> HttpResponse {
+pub async fn list_acme_accounts(_: crate::api::auth::AuthUser) -> HttpResponse {
     if !is_linux() {
         return HttpResponse::BadRequest().json(ResponseStructureError {
             success: false, code: 400,
@@ -383,7 +383,7 @@ pub async fn list_acme_accounts() -> HttpResponse {
 }
 
 /// POST /api/v1/ssl/accounts — register ACME account
-pub async fn register_acme_account(body: web::Json<AcmeAccountBody>) -> HttpResponse {
+pub async fn register_acme_account(_: crate::api::auth::AdminUser, body: web::Json<AcmeAccountBody>) -> HttpResponse {
     if !is_linux() {
         return HttpResponse::BadRequest().json(ResponseStructureError {
             success: false, code: 400,
@@ -431,7 +431,7 @@ pub async fn register_acme_account(body: web::Json<AcmeAccountBody>) -> HttpResp
 }
 
 /// GET /api/v1/ssl/certificates — list certificates
-pub async fn list_certificates() -> HttpResponse {
+pub async fn list_certificates(_: crate::api::auth::AuthUser) -> HttpResponse {
     if !is_linux() {
         return HttpResponse::BadRequest().json(ResponseStructureError {
             success: false, code: 400,
@@ -482,7 +482,7 @@ pub async fn list_certificates() -> HttpResponse {
 }
 
 /// GET /api/v1/ssl/certificates/{domain} — get certificate detail
-pub async fn get_certificate_detail(path: web::Path<String>) -> HttpResponse {
+pub async fn get_certificate_detail(_: crate::api::auth::AuthUser, path: web::Path<String>) -> HttpResponse {
     if !is_linux() {
         return HttpResponse::BadRequest().json(ResponseStructureError {
             success: false, code: 400,
@@ -535,7 +535,7 @@ pub async fn get_certificate_detail(path: web::Path<String>) -> HttpResponse {
 }
 
 /// POST /api/v1/ssl/issue — issue certificate
-pub async fn issue_certificate(body: web::Json<IssueCertBody>) -> HttpResponse {
+pub async fn issue_certificate(_: crate::api::auth::AdminUser, body: web::Json<IssueCertBody>) -> HttpResponse {
     if !is_linux() {
         return HttpResponse::BadRequest().json(ResponseStructureError {
             success: false, code: 400,
@@ -633,7 +633,7 @@ pub async fn issue_certificate(body: web::Json<IssueCertBody>) -> HttpResponse {
 }
 
 /// POST /api/v1/ssl/renew/{domain}
-pub async fn renew_certificate(path: web::Path<String>) -> HttpResponse {
+pub async fn renew_certificate(_: crate::api::auth::AdminUser, path: web::Path<String>) -> HttpResponse {
     if !is_linux() {
         return HttpResponse::BadRequest().json(ResponseStructureError {
             success: false, code: 400,
@@ -678,7 +678,7 @@ pub async fn renew_certificate(path: web::Path<String>) -> HttpResponse {
 }
 
 /// DELETE /api/v1/ssl/certificates/{domain}
-pub async fn delete_certificate(path: web::Path<String>) -> HttpResponse {
+pub async fn delete_certificate(_: crate::api::auth::AdminUser, path: web::Path<String>) -> HttpResponse {
     if !is_linux() {
         return HttpResponse::BadRequest().json(ResponseStructureError {
             success: false, code: 400,
@@ -722,7 +722,7 @@ pub async fn delete_certificate(path: web::Path<String>) -> HttpResponse {
 }
 
 /// POST /api/v1/ssl/deploy — deploy certificate to nginx site
-pub async fn deploy_certificate(body: web::Json<DeployCertBody>) -> HttpResponse {
+pub async fn deploy_certificate(_: crate::api::auth::AdminUser, body: web::Json<DeployCertBody>) -> HttpResponse {
     if !is_linux() {
         return HttpResponse::BadRequest().json(ResponseStructureError {
             success: false, code: 400,
@@ -840,7 +840,7 @@ pub struct UploadCertBody {
 }
 
 /// POST /api/v1/ssl/upload — upload existing certificate and private key
-pub async fn upload_certificate(body: web::Json<UploadCertBody>) -> HttpResponse {
+pub async fn upload_certificate(_: crate::api::auth::AdminUser, body: web::Json<UploadCertBody>) -> HttpResponse {
     let cert_dir = format!("{}/certificates/{}", MANAGED_CERTBOT_DIR, body.name);
     let _ = tokio::fs::create_dir_all(&cert_dir).await;
 
@@ -941,7 +941,7 @@ pub struct SelfSignedBody {
 fn default_365() -> u32 { 365 }
 
 /// POST /api/v1/ssl/self-signed — generate a self-signed certificate
-pub async fn self_signed_certificate(body: web::Json<SelfSignedBody>) -> HttpResponse {
+pub async fn self_signed_certificate(_: crate::api::auth::AdminUser, body: web::Json<SelfSignedBody>) -> HttpResponse {
     let cert_dir = format!("{}/self-signed/{}", MANAGED_CERTBOT_DIR, body.domain);
     let _ = tokio::fs::create_dir_all(&cert_dir).await;
 

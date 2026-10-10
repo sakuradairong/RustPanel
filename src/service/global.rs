@@ -11,11 +11,14 @@ use crate::service::conf::Config;
 
 
 lazy_static! {
-    pub static ref USER_PASSWORD_KEY: String = std::env::var("RP_SECRET_KEY")
-        .unwrap_or_else(|_| String::from("4e425cc46f42a4e01ee54a3a1e7db645e629621d"));
-    pub static ref SESSION_KEY: Vec<u8> = std::env::var("RP_SESSION_KEY")
-        .map(|s| s.into_bytes())
-        .unwrap_or_else(|_| b"749d93ea30bf13e0b4a07d8f8fe5aa488b6c83fc886a266dd2c80590026f7b49".to_vec());
+    pub static ref SECURITY_KEYS: Result<super::security::SecurityKeys, String> =
+        super::security::SecurityKeys::from_environment();
+    pub static ref USER_PASSWORD_KEY: String = SECURITY_KEYS
+        .as_ref().expect("Security keys must be validated before serving requests")
+        .signing.clone();
+    pub static ref SESSION_KEY: Vec<u8> = SECURITY_KEYS
+        .as_ref().expect("Security keys must be validated before serving requests")
+        .session.clone();
 }
 
 

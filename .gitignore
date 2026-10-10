@@ -17,3 +17,6 @@ public/app_full.js
 panel.pid
 runtime/
 *.bak
+
+# Reproducible builds for the panel and rp binaries.
+!Cargo.lock

@@ -13,7 +13,7 @@ use diesel::{r2d2::ConnectionManager, SqliteConnection};
 use rust_panel::{
     api, common::sys::get_all_ip_addresses, errors::handlers, log_error, log_info, log_warn, models::user::find_user_by_id, service::{
         db::{install, DBPool},
-        global::{CONF, SESSION_KEY},
+        global::{CONF, SESSION_KEY, SECURITY_KEYS},
         init::init_app,
     }, test
 };
@@ -41,6 +41,9 @@ async fn greet(
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
+    SECURITY_KEYS.as_ref().map_err(|message| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, message.clone())
+    })?;
     init();
     let pool: DBPool = r2d2::Pool::builder()
         .max_size(CONF.database.max_pool)
