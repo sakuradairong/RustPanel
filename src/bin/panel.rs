@@ -154,6 +154,9 @@ async fn main() -> std::io::Result<()> {
     HttpServer::new(move || {
         App::new()
             .app_data(web::Data::new(pool.clone()))
+            .app_data(web::Data::new(
+                rust_panel::service::path_bounds::FileRootConfig::from_env(),
+            ))
             .app_data(web::JsonConfig::default().error_handler(handlers::json_error_handler))
             .app_data(web::PathConfig::default().error_handler(handlers::path_error_handler))
                 //.app_data(web::JsonConfig::default().limit(4096))

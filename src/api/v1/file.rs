@@ -2,10 +2,12 @@ use crate::api::auth::AuthUser;
 use crate::api::{ResponseStructure, ResponseStructureError};
 use crate::models::file::{self, SaveData};
 use crate::service::db::DBPool;
+use crate::service::path_bounds::{self, FileRootConfig, PathBoundError};
 use crate::service::rbac::{self, PERM_FILE_READ, PERM_FILE_WRITE};
 
 use actix_web::{web, HttpResponse, ResponseError};
 use serde::Deserialize;
+use std::path::PathBuf;
 
 #[derive(Deserialize)]
 pub struct ListData {
@@ -15,39 +17,59 @@ pub struct ListData {
     pub page_size: i32,
 }
 
-pub async fn list(user: AuthUser, pool: web::Data<DBPool>, data: web::Query<ListData>) -> HttpResponse {
+fn path_error_response(err: PathBoundError) -> HttpResponse {
+    if err.is_escape() {
+        ResponseStructureError::forbidden(err.message())
+    } else {
+        ResponseStructureError::internal(err.message())
+    }
+}
+
+fn effective_roots(roots: &Option<web::Data<FileRootConfig>>) -> Vec<PathBuf> {
+    roots
+        .as_ref()
+        .map(|cfg| cfg.roots.clone())
+        .unwrap_or_else(path_bounds::managed_roots)
+}
+
+pub async fn list(
+    user: AuthUser,
+    pool: web::Data<DBPool>,
+    roots: Option<web::Data<FileRootConfig>>,
+    data: web::Query<ListData>,
+) -> HttpResponse {
     if let Err(err) = rbac::require_perm(pool.get_ref(), &user, PERM_FILE_READ) {
         return err.error_response();
     }
-    // Security: reject paths containing ".." to prevent directory traversal
-    if data.path.contains("..") {
-        return HttpResponse::BadRequest().json(ResponseStructureError {
-            success: false,
-            code: 400,
-            message: String::from("Path must not contain '..'"),
-        });
+    let bound = match path_bounds::resolve_existing_under(&data.path, &effective_roots(&roots)) {
+        Ok(bound) => bound,
+        Err(err) => return path_error_response(err),
+    };
+    match file::list_bounded(bound) {
+        Ok(listing) => HttpResponse::Ok().json(ResponseStructure {
+            success: true,
+            code: 200,
+            message: String::from("success"),
+            data: Some(listing),
+        }),
+        Err(err) => path_error_response(err),
     }
-    HttpResponse::Ok().json(ResponseStructure {
-        success: true,
-        code: 200,
-        message: String::from("success"),
-        data: Some(file::get_files_and_dirs_list(data.path.as_str())),
-    })
 }
 
-pub async fn save(user: AuthUser, pool: web::Data<DBPool>, data: web::Json<SaveData>) -> HttpResponse {
+pub async fn save(
+    user: AuthUser,
+    pool: web::Data<DBPool>,
+    roots: Option<web::Data<FileRootConfig>>,
+    data: web::Json<SaveData>,
+) -> HttpResponse {
     if let Err(err) = rbac::require_perm(pool.get_ref(), &user, PERM_FILE_WRITE) {
         return err.error_response();
     }
-    // Security: reject paths containing ".." to prevent directory traversal
-    if data.path.contains("..") {
-        return HttpResponse::BadRequest().json(ResponseStructureError {
-            success: false,
-            code: 400,
-            message: String::from("Path must not contain '..'"),
-        });
-    }
-    match file::save(data.into_inner()) {
+    let bound = match path_bounds::resolve_for_write_under(&data.path, &effective_roots(&roots)) {
+        Ok(bound) => bound,
+        Err(err) => return path_error_response(err),
+    };
+    match file::save_bounded(bound, data.into_inner().content) {
         Ok(_) => HttpResponse::Ok().json(ResponseStructure {
             success: true,
             code: 200,
@@ -70,20 +92,17 @@ pub struct ContentData {
 pub async fn content(
     user: AuthUser,
     pool: web::Data<DBPool>,
+    roots: Option<web::Data<FileRootConfig>>,
     data: web::Query<ContentData>,
 ) -> HttpResponse {
     if let Err(err) = rbac::require_perm(pool.get_ref(), &user, PERM_FILE_READ) {
         return err.error_response();
     }
-    // Security: reject paths containing ".." to prevent directory traversal
-    if data.path.contains("..") {
-        return HttpResponse::BadRequest().json(ResponseStructureError {
-            success: false,
-            code: 400,
-            message: String::from("Path must not contain '..'"),
-        });
-    }
-    match file::content(data.path.to_string()) {
+    let bound = match path_bounds::resolve_existing_under(&data.path, &effective_roots(&roots)) {
+        Ok(bound) => bound,
+        Err(err) => return path_error_response(err),
+    };
+    match file::content_bounded(bound) {
         Ok((content, extension)) => HttpResponse::Ok().json(ResponseStructure {
             success: true,
             code: 200,

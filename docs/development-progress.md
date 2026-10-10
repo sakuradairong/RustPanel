@@ -44,18 +44,30 @@
 | --- | --- | --- | --- |
 | RP-03 资源范围 RBAC | 已实现并验证 | 迁移 `004_rbac`：`roles`/`permissions`/`role_permissions`/`user_roles`；内置 admin/operator/viewer；`require_perm` + `AdminUser`（`user:admin`）；installer/sites/firewall/file 写与 nginx 站点写受权限约束；新建用户默认 viewer；权限查 DB 即时生效 | Docker/process/service 写权限可继续收紧；资源实例级范围（按站点/路径）属后续增强 |
 
+## 第六批：RP-06 文件路径边界与原子写
+
+| 任务 | 状态 | 本次实现 | 后续边界 |
+| --- | --- | --- | --- |
+| RP-06 dirfd 文件边界与写保护 | 已实现并验证 | `path_bounds`：`RP_FILE_ROOTS` / `RP_FILE_EXPERT_MODE`；拒绝 `..`/根外绝对路径/软链；Linux `openat2(RESOLVE_BENEATH\|NO_SYMLINKS)` + dirfd `O_NOFOLLOW` 回退；file list/save/content 越界 403；同目录临时文件 + rename 原子写 | 上传/解压 zip-slip 与压缩炸弹属 C.9；写入经特权 runner 属 RP-07 |
+
+要点：
+
+- 未配置时默认受管根为 `/www` 与 `/var/www`（不是 `/`）；`RP_FILE_EXPERT_MODE=1` 才允许以 `/` 为根。
+- 越界与软链逃逸返回 **403**（不再仅用 `contains("..")` 的 400）。
+
 ## 验证范围
 
 - 既有安全集成测试保留并改为会话 JWT：无凭据 SSL 401、角色 403、禁用/`token_version`/删除用户拒绝、登出后立即失效、池耗尽 503、缺密钥拒启。
 - Argon2id / SHA-1 重哈希单测；登录限流单测；迁移到版本 4 + 热备校验。
 - 断言访问令牌字符串不含口令哈希。
 - Viewer 对 installer install、nginx 建站、firewall 规则写、file save 返回 403。
+- 文件路径：`..`/根外路径/软链逃逸 403；受管根内 list 与原子写单测通过。
 
-构建和测试命令：`cargo test --locked`；本批结果为 37 个测试全部通过（25 个库测试 + 12 个集成测试）。系统级 TLS、ACME、浏览器回归和跨架构尚未验证。
+构建和测试命令：`cargo test --locked`；本批结果为 44 个测试全部通过（30 个库测试 + 14 个集成测试，含 file_bounds / TOCTOU 软链重开拒绝）。系统级 TLS、ACME、浏览器回归和跨架构尚未验证。
 
 ## 接下来
 
-1. RP-06 / RP-07 / RP-09：路径边界、受限 runner 与审计。
+1. RP-07 / RP-09：受限 runner 与审计 intent/outbox。
 2. RP-05 补齐一次性 SSE 票据；RP-10 TLS/bootstrap/CSRF；RP-11 audit/deny/SBOM。
 3. RP-23 增强：refresh 轮换与会话过期清理任务。
 

@@ -17,3 +17,4 @@ pub mod password;
 pub mod sessions;
 pub mod rate_limit;
 pub mod rbac;
+pub mod path_bounds;
