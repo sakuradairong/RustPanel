@@ -20,6 +20,7 @@ use crate::models::structure::rp_users::Users;
 use crate::models::structure::schema::rp_users;
 use crate::service::db::DBPool;
 use crate::service::password::{self, ALGO_ARGON2ID};
+use crate::service::sessions;
 
 #[derive(Deserialize)]
 pub struct CreateUserBody {
@@ -204,6 +205,7 @@ body: web::Json<CreateUserBody>,) -> HttpResponse {
             rp_users::updated_at.eq(now),
             rp_users::password_algo.eq(ALGO_ARGON2ID),
             rp_users::must_change_password.eq(1),
+            rp_users::token_version.eq(0),
         ))
         .execute(&mut *conn)
     {
@@ -317,18 +319,24 @@ body: web::Json<UpdateUserBody>,) -> HttpResponse {
         ))
         .execute(&mut *conn)
     {
-        Ok(_) => HttpResponse::Ok().json(ResponseStructure {
-            success: true,
-            code: 200,
-            message: String::from("success"),
-            data: Some(UserResponse {
-                id: user.id,
-                username: user.username.clone(),
-                authority: user.authority.clone(),
-                status: user.status,
-                created_at: user.created_at,
-            }),
-        }),
+        Ok(_) => {
+            if clear_must_change {
+                let _ = sessions::bump_token_version(&mut conn, id);
+                let _ = sessions::revoke_all_for_user(&mut conn, id);
+            }
+            HttpResponse::Ok().json(ResponseStructure {
+                success: true,
+                code: 200,
+                message: String::from("success"),
+                data: Some(UserResponse {
+                    id: user.id,
+                    username: user.username.clone(),
+                    authority: user.authority.clone(),
+                    status: user.status,
+                    created_at: user.created_at,
+                }),
+            })
+        }
         Err(err) => map_diesel_error(err),
     }
 }
@@ -412,16 +420,20 @@ path: web::Path<ResetPasswordPath>,) -> HttpResponse {
         ))
         .execute(&mut *conn)
     {
-        Ok(_) => HttpResponse::Ok().json(ResponseStructure {
-            success: true,
-            code: 200,
-            message: String::from("success"),
-            data: Some(ResetPasswordResponse {
-                id: user.id,
-                username: user.username,
-                new_password,
-            }),
-        }),
+        Ok(_) => {
+            let _ = sessions::bump_token_version(&mut conn, path.id);
+            let _ = sessions::revoke_all_for_user(&mut conn, path.id);
+            HttpResponse::Ok().json(ResponseStructure {
+                success: true,
+                code: 200,
+                message: String::from("success"),
+                data: Some(ResetPasswordResponse {
+                    id: user.id,
+                    username: user.username,
+                    new_password,
+                }),
+            })
+        }
         Err(err) => map_diesel_error(err),
     }
 }

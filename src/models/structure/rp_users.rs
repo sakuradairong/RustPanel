@@ -24,14 +24,13 @@ pub struct Users {
     pub updated_at: chrono::NaiveDateTime,
     pub password_algo: String,
     pub must_change_password: i32,
+    pub token_version: i32,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SlimUser {
     pub id: i32,
     pub username: String,
-    /// Password hash embedded for legacy JWT validity checks until RP-23 sessions land.
-    pub password: String,
     pub authority: String,
     pub created_at: chrono::NaiveDateTime,
 }
@@ -39,11 +38,10 @@ pub struct SlimUser {
 impl From<Users> for SlimUser {
     fn from(user: Users) -> Self {
         SlimUser {
-             id:user.id,
-             username:user.username,
-             password:user.password,
-             authority:user.authority,
-             created_at:user.created_at,
+            id: user.id,
+            username: user.username,
+            authority: user.authority,
+            created_at: user.created_at,
         }
     }
 }

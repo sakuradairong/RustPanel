@@ -7,7 +7,7 @@
  * @FilePath: \RustPanel\src\api\v1\login.rs
  */
 
-use actix_web::{web, Error, HttpResponse};
+use actix_web::{web, Error, HttpRequest, HttpResponse};
 use rust_i18n::t;
 use std::{
     collections::HashMap,
@@ -16,7 +16,7 @@ use std::{
 
 use crate::{
     api::{
-        auth::{generate_jwt, AuthUser},
+        auth::{generate_jwt, session_ttl_seconds, AuthUser},
         ResponseStructure, ResponseStructureError,
     },
     common::fun::sm4_decrypt_login,
@@ -26,6 +26,8 @@ use crate::{
         db::DBPool,
         global::CONF,
         password::{self, ALGO_ARGON2ID},
+        rate_limit::LOGIN_RATE_LIMITER,
+        sessions,
     },
 };
 use serde::{Deserialize, Serialize};
@@ -42,7 +44,15 @@ struct LoginSuccessData {
     user: serde_json::Value,
 }
 
+fn client_ip(req: &HttpRequest) -> String {
+    req.connection_info()
+        .realip_remote_addr()
+        .unwrap_or("unknown")
+        .to_owned()
+}
+
 pub async fn sign(
+    req: HttpRequest,
     pool: web::Data<DBPool>,
     auth_data: web::Json<LoginAuthData>,
     security_dir: web::Path<String>,
@@ -65,13 +75,7 @@ pub async fn sign(
                     }),
                 );
             }
-        } /*else {
-              return Ok(HttpResponse::InternalServerError().json(ResponseStructureError {
-                  success: false,
-                  code: 101,
-                  message: String::from("Invalid timestamp.-2"),
-              }));
-          }*/
+        }
 
         let user_data: LoginAuthData = LoginAuthData {
             username: sm4_decrypt_login(
@@ -87,71 +91,84 @@ pub async fn sign(
             timestamp: 0,
         };
 
-        let db_user = web::block(move || query(user_data, pool)).await??;
-        let must_change_password = db_user.must_change_password != 0;
-        let user: AuthUser = db_user.into();
-
-        //   Identity::login(&req.extensions(), serde_json::to_string(&user).unwrap()).unwrap();
-        //返回Cookies
-        let user_json = match serde_json::to_string(&user) {
-            Ok(s) => s,
-            Err(_) => {
-                return Ok(
-                    HttpResponse::InternalServerError().json(ResponseStructureError {
-                        success: false,
-                        code: 500,
-                        message: String::from("serialize user error"),
-                    }),
-                )
+        let ip = client_ip(&req);
+        let user_agent = req
+            .headers()
+            .get("User-Agent")
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned);
+        {
+            let mut limiter = LOGIN_RATE_LIMITER.lock().unwrap();
+            if let Err(message) = limiter.check(&user_data.username, &ip) {
+                return Ok(HttpResponse::TooManyRequests().json(ResponseStructureError {
+                    success: false,
+                    code: 429,
+                    message,
+                }));
             }
-        };
+        }
 
-        let token_val = match generate_jwt(&user_json) {
-            Ok(t) => t,
-            Err(_) => {
-                return Ok(
-                    HttpResponse::InternalServerError().json(ResponseStructureError {
-                        success: false,
-                        code: 500,
-                        message: String::from("generate token error"),
-                    }),
-                )
+        let login_username = user_data.username.clone();
+        let login_result = web::block({
+            let pool = pool.clone();
+            let ip = ip.clone();
+            let user_agent = user_agent.clone();
+            move || issue_session_token(user_data, pool, Some(ip.as_str()), user_agent.as_deref())
+        })
+        .await?;
+
+        match login_result {
+            Ok((token_val, user_json)) => {
+                LOGIN_RATE_LIMITER
+                    .lock()
+                    .unwrap()
+                    .clear_success(&login_username, &ip);
+                return Ok(HttpResponse::Ok()
+                    .cookie(actix_web::cookie::Cookie::build("token", token_val.clone()).finish())
+                    .json(ResponseStructure {
+                        success: true,
+                        code: 200,
+                        message: String::from("success"),
+                        data: Some(LoginSuccessData {
+                            token: token_val,
+                            user: user_json,
+                        }),
+                    }));
             }
-        };
-
-        return Ok(HttpResponse::Ok()
-            .cookie(
-                actix_web::cookie::Cookie::build(
-                    "token",
-                    token_val.clone(),
-                )
-                .finish(),
-            )
-            .json(ResponseStructure {
-                success: true,
-                code: 200,
-                message: String::from("success"),
-                data: Some(LoginSuccessData {
-                    token: token_val,
-                    user: serde_json::json!({
-                        "id": user.id,
-                        "username": user.username,
-                        "authority": user.authority,
-                        "must_change_password": must_change_password,
-                    })
-                }),
-              
-            }));
-
-        //return Ok(HttpResponse::Ok().body("Login Success"))
+            Err(err) => {
+                LOGIN_RATE_LIMITER
+                    .lock()
+                    .unwrap()
+                    .record_failure(&login_username, &ip);
+                return Err(err.into());
+            }
+        }
     }
     Ok(HttpResponse::NotFound().finish())
+}
+
+pub async fn logout(user: AuthUser, pool: web::Data<DBPool>) -> Result<HttpResponse, Error> {
+    let jti = user.jti.clone();
+    web::block(move || {
+        let mut conn = pool.get().map_err(|_| {
+            CommonError::ServiceUnavailable("Authentication database unavailable".into())
+        })?;
+        sessions::revoke_session(&mut conn, &jti)
+            .map_err(|err| CommonError::InternalServerError(err))?;
+        Ok::<(), CommonError>(())
+    })
+    .await??;
+    Ok(HttpResponse::Ok().json(ResponseStructure {
+        success: true,
+        code: 200,
+        message: String::from("success"),
+        data: None::<bool>,
+    }))
 }
 
 pub async fn get_security_dir(
     query: web::Query<HashMap<String, String>>,
 ) -> Result<HttpResponse, Error> {
-    // 尝试从查询参数中获取 "key"，如果 "key" 参数不存在，返回 400 错误
     let security_dir = match query.get("v") {
         Some(key) => key,
         None => {
@@ -166,14 +183,12 @@ pub async fn get_security_dir(
     };
 
     if security_dir == &CONF.app.security_dir {
-        // 如果匹配，返回成功的响应
         Ok(HttpResponse::Ok().json(ResponseStructureError {
             success: true,
             code: 200,
             message: String::from("success"),
         }))
     } else {
-        // 如果不匹配，返回 404 错误，表示未找到
         Ok(
             HttpResponse::InternalServerError().json(ResponseStructureError {
                 success: false,
@@ -182,6 +197,30 @@ pub async fn get_security_dir(
             }),
         )
     }
+}
+
+fn issue_session_token(
+    auth_data: LoginAuthData,
+    pool: web::Data<DBPool>,
+    ip: Option<&str>,
+    user_agent: Option<&str>,
+) -> Result<(String, serde_json::Value), CommonError> {
+    let user = query(auth_data, pool.clone())?;
+    let mut conn = pool.get().map_err(|_| {
+        CommonError::InternalServerError("Failed to get a connection from the pool".into())
+    })?;
+    let ttl = session_ttl_seconds();
+    let session = sessions::create_session(&mut conn, user.id, ttl, ip, user_agent)
+        .map_err(CommonError::InternalServerError)?;
+    let token = generate_jwt(user.id, &session.jti, user.token_version, session.expires_at_unix)
+        .map_err(|_| CommonError::InternalServerError("generate token error".into()))?;
+    let user_json = serde_json::json!({
+        "id": user.id,
+        "username": user.username,
+        "authority": user.authority,
+        "must_change_password": user.must_change_password != 0,
+    });
+    Ok((token, user_json))
 }
 
 fn query(
@@ -272,7 +311,6 @@ mod tests {
 
     fn pool() -> DBPool {
         let file = tempfile::NamedTempFile::new().unwrap();
-        // Leak the temp path for the pool lifetime in this unit test process.
         let path = file.into_temp_path();
         let path_str = path.to_str().unwrap().to_owned();
         std::mem::forget(path);
@@ -292,10 +330,10 @@ mod tests {
             .batch_execute(&format!(
                 "INSERT INTO rp_users (
                     username, password, salt, authority, error_count, status,
-                    created_at, updated_at, password_algo, must_change_password
+                    created_at, updated_at, password_algo, must_change_password, token_version
                 ) VALUES (
                     'test-user', '{password_hash}', 'test-salt', 'user', 0, -1,
-                    '2026-10-10 00:00:00', '2026-10-10 00:00:00', '{ALGO_SHA1}', 0
+                    '2026-10-10 00:00:00', '2026-10-10 00:00:00', '{ALGO_SHA1}', 0, 0
                 );"
             ))
             .unwrap();
@@ -325,10 +363,10 @@ mod tests {
             .batch_execute(&format!(
                 "INSERT INTO rp_users (
                     username, password, salt, authority, error_count, status,
-                    created_at, updated_at, password_algo, must_change_password
+                    created_at, updated_at, password_algo, must_change_password, token_version
                 ) VALUES (
                     'legacy-user', '{password_hash}', 'old-salt', 'user', 0, 0,
-                    '2026-10-10 00:00:00', '2026-10-10 00:00:00', '{ALGO_SHA1}', 0
+                    '2026-10-10 00:00:00', '2026-10-10 00:00:00', '{ALGO_SHA1}', 0, 0
                 );"
             ))
             .unwrap();
@@ -343,7 +381,6 @@ mod tests {
         .unwrap();
         assert_eq!(user.password_algo, "argon2id");
         assert!(user.password.starts_with("$argon2id$"));
-        // Second login still works with the upgraded hash.
         assert!(query(
             LoginAuthData {
                 username: "legacy-user".into(),

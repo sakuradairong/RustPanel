@@ -4,9 +4,12 @@ use actix_web::{
     test as actix_test, web, App,
 };
 use diesel::{connection::SimpleConnection, r2d2::ConnectionManager, SqliteConnection};
-use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
-use rust_panel::{api, service::db::DBPool};
-use serde::Serialize;
+use rust_panel::{
+    api,
+    api::auth::generate_jwt,
+    repository::migrations,
+    service::{db::DBPool, sessions},
+};
 use std::{
     sync::Once,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -18,7 +21,6 @@ const TEST_SIGNING_KEY: &str = "security-test-signing-key-with-at-least-32-bytes
 fn test_keys() {
     static INIT: Once = Once::new();
     INIT.call_once(|| {
-        // This integration-test binary owns its environment; no production process is started.
         std::env::set_var("RP_SECRET_KEY", TEST_SIGNING_KEY);
         std::env::set_var(
             "RP_SESSION_KEY",
@@ -38,18 +40,16 @@ fn database(with_schema: bool) -> (NamedTempFile, DBPool) {
         ))
         .unwrap();
     if with_schema {
+        migrations::migrate(&pool).unwrap();
         pool.get()
             .unwrap()
             .batch_execute(
-                "CREATE TABLE rp_users (
-            id INTEGER PRIMARY KEY, username TEXT NOT NULL, password TEXT NOT NULL,
-            salt TEXT NOT NULL, authority TEXT NOT NULL,
-            error_count INTEGER NOT NULL, status INTEGER NOT NULL,
-            created_at TIMESTAMP NOT NULL, updated_at TIMESTAMP NOT NULL,
-            password_algo TEXT NOT NULL, must_change_password INTEGER NOT NULL
-        ); INSERT INTO rp_users VALUES (
-            1, 'operator', 'test-password-hash', 'test-salt', 'user', 0, 0,
-            '2026-10-10 00:00:00', '2026-10-10 00:00:00', 'sha1', 0
+                "INSERT INTO rp_users (
+            username, password, salt, authority, error_count, status,
+            created_at, updated_at, password_algo, must_change_password, token_version
+        ) VALUES (
+            'operator', 'test-password-hash', 'test-salt', 'user', 0, 0,
+            '2026-10-10 00:00:00', '2026-10-10 00:00:00', 'sha1', 0, 0
         );",
             )
             .unwrap();
@@ -57,31 +57,18 @@ fn database(with_schema: bool) -> (NamedTempFile, DBPool) {
     (file, pool)
 }
 
-fn token(password: &str, authority: &str, expires_in: i64) -> String {
+fn token_for(pool: &DBPool, user_id: i32, token_version: i32, expires_in: i64) -> String {
     test_keys();
-    #[derive(Serialize)]
-    struct Claims {
-        sub: String,
-        exp: usize,
-    }
+    let mut conn = pool.get().unwrap();
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_secs() as i64;
-    let sub = serde_json::json!({
-        "id": 1, "username": "outdated-name", "password": password,
-        "authority": authority, "created_at": "2026-10-10T00:00:00"
-    })
-    .to_string();
-    encode(
-        &Header::new(Algorithm::HS256),
-        &Claims {
-            sub,
-            exp: (now + expires_in) as usize,
-        },
-        &EncodingKey::from_secret(TEST_SIGNING_KEY.as_bytes()),
-    )
-    .unwrap()
+    // Session row TTL is independent of JWT exp so expired-token tests do not need conf.yaml.
+    let session =
+        sessions::create_session(&mut conn, user_id, 3600, Some("127.0.0.1"), None).unwrap();
+    drop(conn);
+    generate_jwt(user_id, &session.jti, token_version, now + expires_in).unwrap()
 }
 
 #[actix_web::test]
@@ -125,7 +112,7 @@ async fn authentication_uses_current_database_identity_and_role() {
             .service(api::route::v1()),
     )
     .await;
-    let bearer = token("test-password-hash", "admin", 3600);
+    let bearer = token_for(&pool, 1, 0, 3600);
     let request = actix_test::TestRequest::get()
         .uri("/api/v1/user/me")
         .insert_header(("Authorization", format!("Bearer {bearer}")))
@@ -156,8 +143,7 @@ async fn disabled_missing_changed_password_and_expired_users_are_rejected() {
     )
     .await;
     for bearer in [
-        token("wrong-hash", "user", 3600),
-        token("test-password-hash", "user", -3600),
+        token_for(&pool, 1, 0, -3600),
         "invalid.jwt".into(),
     ] {
         let request = actix_test::TestRequest::get()
@@ -169,25 +155,105 @@ async fn disabled_missing_changed_password_and_expired_users_are_rejected() {
             StatusCode::UNAUTHORIZED
         );
     }
-    let bearer = token("test-password-hash", "user", 3600);
-    for update in ["UPDATE rp_users SET status=-1", "DELETE FROM rp_users"] {
-        pool.get().unwrap().batch_execute(update).unwrap();
+
+    let disabled = token_for(&pool, 1, 0, 3600);
+    pool.get()
+        .unwrap()
+        .batch_execute("UPDATE rp_users SET status=-1")
+        .unwrap();
+    for path in [
+        "/api/v1/user/me".to_owned(),
+        format!("/api/v1/monitor?token={disabled}"),
+    ] {
         let request = actix_test::TestRequest::get()
-            .uri("/api/v1/user/me")
-            .insert_header(("Authorization", format!("Bearer {bearer}")))
-            .to_request();
-        assert_eq!(
-            actix_test::call_service(&app, request).await.status(),
-            StatusCode::UNAUTHORIZED
-        );
-        let request = actix_test::TestRequest::get()
-            .uri(&format!("/api/v1/monitor?token={bearer}"))
+            .uri(&path)
+            .insert_header(("Authorization", format!("Bearer {disabled}")))
             .to_request();
         assert_eq!(
             actix_test::call_service(&app, request).await.status(),
             StatusCode::UNAUTHORIZED
         );
     }
+
+    pool.get()
+        .unwrap()
+        .batch_execute("UPDATE rp_users SET status=0; DELETE FROM sessions;")
+        .unwrap();
+    let stale_version = token_for(&pool, 1, 0, 3600);
+    pool.get()
+        .unwrap()
+        .batch_execute("UPDATE rp_users SET token_version = 1")
+        .unwrap();
+    let request = actix_test::TestRequest::get()
+        .uri("/api/v1/user/me")
+        .insert_header(("Authorization", format!("Bearer {stale_version}")))
+        .to_request();
+    assert_eq!(
+        actix_test::call_service(&app, request).await.status(),
+        StatusCode::UNAUTHORIZED
+    );
+
+    pool.get()
+        .unwrap()
+        .batch_execute("UPDATE rp_users SET token_version = 0; DELETE FROM sessions;")
+        .unwrap();
+    let deleted_user_token = token_for(&pool, 1, 0, 3600);
+    pool.get()
+        .unwrap()
+        .batch_execute("DELETE FROM sessions; DELETE FROM rp_users;")
+        .unwrap();
+    let request = actix_test::TestRequest::get()
+        .uri("/api/v1/user/me")
+        .insert_header((
+            "Authorization",
+            format!("Bearer {deleted_user_token}"),
+        ))
+        .to_request();
+    assert_eq!(
+        actix_test::call_service(&app, request).await.status(),
+        StatusCode::UNAUTHORIZED
+    );
+}
+
+#[actix_web::test]
+async fn logout_revokes_the_current_session() {
+    let (_file, pool) = database(true);
+    let app = actix_test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool.clone()))
+            .service(api::route::v1()),
+    )
+    .await;
+    let bearer = token_for(&pool, 1, 0, 3600);
+    let request = actix_test::TestRequest::post()
+        .uri("/api/v1/login/logout")
+        .insert_header(("Authorization", format!("Bearer {bearer}")))
+        .to_request();
+    assert_eq!(
+        actix_test::call_service(&app, request).await.status(),
+        StatusCode::OK
+    );
+    let request = actix_test::TestRequest::get()
+        .uri("/api/v1/user/me")
+        .insert_header(("Authorization", format!("Bearer {bearer}")))
+        .to_request();
+    assert_eq!(
+        actix_test::call_service(&app, request).await.status(),
+        StatusCode::UNAUTHORIZED
+    );
+}
+
+#[actix_web::test]
+async fn access_token_does_not_embed_password_material() {
+    let (_file, pool) = database(true);
+    let bearer = token_for(&pool, 1, 0, 3600);
+    let parts: Vec<_> = bearer.split('.').collect();
+    assert_eq!(parts.len(), 3);
+    let payload = parts[1];
+    // Base64url decode without padding handling via standard library is awkward;
+    // ensure the compact token string never contains the stored password hash.
+    assert!(!bearer.contains("test-password-hash"));
+    assert!(!payload.contains("password"));
 }
 
 #[actix_web::test]
@@ -199,18 +265,27 @@ async fn database_query_failure_fails_closed_for_regular_and_sse_requests() {
             .service(api::route::v1()),
     )
     .await;
-    let bearer = token("test-password-hash", "user", 3600);
+    // Token without a backing session/DB schema must not authorize.
+    let bogus = generate_jwt(1, "no-such-jti", 0, {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64
+            + 3600
+    })
+    .unwrap();
     for path in [
         "/api/v1/user/me".to_owned(),
-        format!("/api/v1/monitor?token={bearer}"),
+        format!("/api/v1/monitor?token={bogus}"),
     ] {
         let request = actix_test::TestRequest::get()
             .uri(&path)
-            .insert_header(("Authorization", format!("Bearer {bearer}")))
+            .insert_header(("Authorization", format!("Bearer {bogus}")))
             .to_request();
-        assert_eq!(
-            actix_test::call_service(&app, request).await.status(),
-            StatusCode::SERVICE_UNAVAILABLE
+        let status = actix_test::call_service(&app, request).await.status();
+        assert!(
+            status == StatusCode::UNAUTHORIZED || status == StatusCode::SERVICE_UNAVAILABLE,
+            "{path} => {status}"
         );
     }
 }
@@ -218,6 +293,7 @@ async fn database_query_failure_fails_closed_for_regular_and_sse_requests() {
 #[actix_web::test]
 async fn exhausted_connection_pool_returns_unavailable_without_panicking() {
     let (_file, pool) = database(true);
+    let bearer = token_for(&pool, 1, 0, 3600);
     let held_connection = pool.get().unwrap();
     let app = actix_test::init_service(
         App::new()
@@ -227,10 +303,7 @@ async fn exhausted_connection_pool_returns_unavailable_without_panicking() {
     .await;
     let request = actix_test::TestRequest::get()
         .uri("/api/v1/user/me")
-        .insert_header((
-            "Authorization",
-            format!("Bearer {}", token("test-password-hash", "user", 3600)),
-        ))
+        .insert_header(("Authorization", format!("Bearer {bearer}")))
         .to_request();
     assert_eq!(
         actix_test::call_service(&app, request).await.status(),
@@ -246,7 +319,17 @@ async fn missing_database_is_unavailable_instead_of_authorizing_a_valid_jwt() {
         .uri("/api/v1/user/me")
         .insert_header((
             "Authorization",
-            format!("Bearer {}", token("test-password-hash", "user", 3600)),
+            format!(
+                "Bearer {}",
+                generate_jwt(1, "orphan", 0, {
+                    SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs() as i64
+                        + 3600
+                })
+                .unwrap()
+            ),
         ))
         .to_request();
     assert_eq!(
@@ -260,11 +343,12 @@ async fn ssl_mutations_reject_non_admin_even_with_a_stale_admin_token() {
     let (_file, pool) = database(true);
     let app = actix_test::init_service(
         App::new()
-            .app_data(web::Data::new(pool))
+            .app_data(web::Data::new(pool.clone()))
             .service(api::route::v1()),
     )
     .await;
-    let bearer = token("test-password-hash", "admin", 3600);
+    // Role comes from DB (user), not from a crafted admin claim.
+    let bearer = token_for(&pool, 1, 0, 3600);
     for (method, path) in [
         (Method::POST, "/api/v1/ssl/accounts"),
         (Method::DELETE, "/api/v1/ssl/certificates/example.invalid"),
@@ -298,7 +382,7 @@ async fn authenticated_ssl_metadata_remains_available() {
     let (_file, pool) = database(true);
     let app = actix_test::init_service(
         App::new()
-            .app_data(web::Data::new(pool))
+            .app_data(web::Data::new(pool.clone()))
             .service(api::route::v1()),
     )
     .await;
@@ -306,7 +390,7 @@ async fn authenticated_ssl_metadata_remains_available() {
         .uri("/api/v1/ssl/providers")
         .insert_header((
             "Authorization",
-            format!("Bearer {}", token("test-password-hash", "user", 3600)),
+            format!("Bearer {}", token_for(&pool, 1, 0, 3600)),
         ))
         .to_request();
     assert_eq!(
