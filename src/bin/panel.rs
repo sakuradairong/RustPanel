@@ -56,7 +56,7 @@ async fn main() -> std::io::Result<()> {
                 format!("Failed to create database pool: {err}"),
             )
         })?;
-    migrate_and_bootstrap(&pool).map_err(|err| {
+    let (_schema_version, bootstrap_admin) = migrate_and_bootstrap(&pool).map_err(|err| {
         std::io::Error::new(
             std::io::ErrorKind::Other,
             format!("Database migrate/bootstrap failed: {}", err.message()),
@@ -128,17 +128,22 @@ async fn main() -> std::io::Result<()> {
         //     .unwrap();
         // });
 
-        match find_user_by_id(1, &pool) {
-            Ok(Some(user)) => {
-                // 用户存在，处理用户数据
-                log_info!("username:{}", user.username);
-                log_info!("password:{}", user.initial_password);
-            }
-            Ok(None) => {
-                log_warn!("User not found");
-            }
-            Err(err) => {
-                log_error!("Error retrieving user: {:?}", err);
+        if let Some(admin) = bootstrap_admin.as_ref() {
+            // One-time credentials exist only in memory for this boot; never re-read from DB.
+            log_info!("bootstrap username:{}", admin.username);
+            log_info!("bootstrap one-time password:{}", admin.password);
+            log_warn!("Change the bootstrap password on first login; it is not stored in plaintext");
+        } else {
+            match find_user_by_id(1, &pool) {
+                Ok(Some(user)) => {
+                    log_info!("username:{}", user.username);
+                }
+                Ok(None) => {
+                    log_warn!("User not found");
+                }
+                Err(err) => {
+                    log_error!("Error retrieving user: {:?}", err);
+                }
             }
         }
         println!("=========Listening AND Login address=========");

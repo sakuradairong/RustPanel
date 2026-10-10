@@ -14,11 +14,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::api::auth::AuthUser;
 use crate::api::{ResponseStructure, ResponseStructureError};
-use crate::common::fun::{generate_random_string, sha1_salt};
+use crate::common::fun::generate_random_string;
 use crate::errors::common::CommonError;
 use crate::models::structure::rp_users::Users;
 use crate::models::structure::schema::rp_users;
 use crate::service::db::DBPool;
+use crate::service::password::{self, ALGO_ARGON2ID};
 
 #[derive(Deserialize)]
 pub struct CreateUserBody {
@@ -179,28 +180,37 @@ body: web::Json<CreateUserBody>,) -> HttpResponse {
         .password
         .clone()
         .unwrap_or_else(|| generate_random_string(12));
-    let salt = generate_random_string(10);
-    let hashed_password = sha1_salt(password.clone(), salt.clone());
+    let hashed_password = match password::hash_argon2id(&password) {
+        Ok(hash) => hash,
+        Err(_) => {
+            return HttpResponse::InternalServerError().json(ResponseStructureError {
+                success: false,
+                code: 500,
+                message: String::from("Failed to hash password"),
+            });
+        }
+    };
     let now = Utc::now().naive_utc();
 
     if let Err(err) = diesel::insert_into(rp_users::table)
         .values((
             rp_users::username.eq(&body.username),
             rp_users::password.eq(&hashed_password),
-            rp_users::salt.eq(&salt),
-            rp_users::initial_password.eq(&password),
+            rp_users::salt.eq(""),
             rp_users::authority.eq(&authority),
             rp_users::error_count.eq(0),
             rp_users::status.eq(0),
             rp_users::created_at.eq(now),
             rp_users::updated_at.eq(now),
+            rp_users::password_algo.eq(ALGO_ARGON2ID),
+            rp_users::must_change_password.eq(1),
         ))
         .execute(&mut *conn)
     {
         return map_diesel_error(err);
     }
 
-    // Query back the inserted user
+    // Query back the inserted user. One-time password is returned here only; never stored.
     match rp_users::table
         .filter(rp_users::username.eq(&body.username))
         .first::<Users>(&mut *conn)
@@ -213,7 +223,7 @@ body: web::Json<CreateUserBody>,) -> HttpResponse {
                 id: user.id,
                 username: user.username,
                 authority: user.authority,
-                initial_password: user.initial_password,
+                initial_password: password,
             }),
         }),
         Err(err) => map_diesel_error(err),
@@ -265,10 +275,23 @@ body: web::Json<UpdateUserBody>,) -> HttpResponse {
     if let Some(ref username) = body.username {
         user.username = username.clone();
     }
+    let mut clear_must_change = false;
     if let Some(ref password) = body.password {
-        let salt = generate_random_string(10);
-        user.password = sha1_salt(password.clone(), salt.clone());
-        user.salt = salt;
+        match password::hash_argon2id(password) {
+            Ok(hash) => {
+                user.password = hash;
+                user.salt.clear();
+                user.password_algo = ALGO_ARGON2ID.to_owned();
+                clear_must_change = true;
+            }
+            Err(_) => {
+                return HttpResponse::InternalServerError().json(ResponseStructureError {
+                    success: false,
+                    code: 500,
+                    message: String::from("Failed to hash password"),
+                });
+            }
+        }
     }
     if let Some(ref authority) = body.authority {
         user.authority = authority.clone();
@@ -277,6 +300,9 @@ body: web::Json<UpdateUserBody>,) -> HttpResponse {
         user.status = status;
     }
     user.updated_at = Utc::now().naive_utc();
+    if clear_must_change {
+        user.must_change_password = 0;
+    }
 
     match diesel::update(rp_users::table.find(id))
         .set((
@@ -286,6 +312,8 @@ body: web::Json<UpdateUserBody>,) -> HttpResponse {
             rp_users::authority.eq(&user.authority),
             rp_users::status.eq(user.status),
             rp_users::updated_at.eq(user.updated_at),
+            rp_users::password_algo.eq(&user.password_algo),
+            rp_users::must_change_password.eq(user.must_change_password),
         ))
         .execute(&mut *conn)
     {
@@ -362,15 +390,24 @@ path: web::Path<ResetPasswordPath>,) -> HttpResponse {
     };
 
     let new_password = generate_random_string(12);
-    let salt = generate_random_string(10);
-    let hashed_password = sha1_salt(new_password.clone(), salt.clone());
+    let hashed_password = match password::hash_argon2id(&new_password) {
+        Ok(hash) => hash,
+        Err(_) => {
+            return HttpResponse::InternalServerError().json(ResponseStructureError {
+                success: false,
+                code: 500,
+                message: String::from("Failed to hash password"),
+            });
+        }
+    };
     let now = Utc::now().naive_utc();
 
     match diesel::update(rp_users::table.find(path.id))
         .set((
             rp_users::password.eq(&hashed_password),
-            rp_users::salt.eq(&salt),
-            rp_users::initial_password.eq(&new_password),
+            rp_users::salt.eq(""),
+            rp_users::password_algo.eq(ALGO_ARGON2ID),
+            rp_users::must_change_password.eq(1),
             rp_users::updated_at.eq(now),
         ))
         .execute(&mut *conn)

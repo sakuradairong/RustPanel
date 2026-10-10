@@ -12,26 +12,33 @@ use rand::Rng;
 use std::fs;
 
 use crate::{
-    common::fun::{generate_random_string, sha1_salt},
+    common::fun::generate_random_string,
     repository::migrations::{self, MigrationError},
+    service::password::{self, ALGO_ARGON2ID},
 };
 
 pub type DBPool = r2d2::Pool<ConnectionManager<SqliteConnection>>;
+
+/// One-time bootstrap credentials. Printed once at first install; never stored in plaintext.
+pub struct BootstrapAdmin {
+    pub username: String,
+    pub password: String,
+}
 
 /// Apply schema migrations, then seed the first admin when the user table is empty.
 ///
 /// Schema authority is `schema_migrations`, not `panel.lock`. Lock file creation remains a
 /// bootstrap marker for operators but never skips migrations. Errors refuse startup.
-pub fn migrate_and_bootstrap(pool: &DBPool) -> Result<i64, MigrationError> {
+pub fn migrate_and_bootstrap(pool: &DBPool) -> Result<(i64, Option<BootstrapAdmin>), MigrationError> {
     let version = migrations::migrate(pool)?;
-    seed_initial_admin_if_empty(pool)?;
-    Ok(version)
+    let bootstrap = seed_initial_admin_if_empty(pool)?;
+    Ok((version, bootstrap))
 }
 
-fn seed_initial_admin_if_empty(pool: &DBPool) -> Result<(), MigrationError> {
+fn seed_initial_admin_if_empty(pool: &DBPool) -> Result<Option<BootstrapAdmin>, MigrationError> {
     if migrations::user_count(pool)? > 0 {
         // Historical installs may still have panel.lock; schema is already authoritative.
-        return Ok(());
+        return Ok(None);
     }
 
     // Preserve prior behaviour: if an operator-created lock exists and there are no users,
@@ -52,22 +59,23 @@ fn seed_initial_admin_if_empty(pool: &DBPool) -> Result<(), MigrationError> {
     use crate::models::structure::schema;
     let now: NaiveDateTime = Utc::now().naive_utc();
     let mut rng = rand::thread_rng();
+    let username = generate_random_string(rng.gen_range(6..12));
     let password = generate_random_string(rng.gen_range(8..18));
-    let salt = generate_random_string(rng.gen_range(8..16));
-    let password_clone = password.clone();
-    let salt_clone = salt.clone();
+    let password_hash = password::hash_argon2id(&password)
+        .map_err(|_| MigrationError::new("Failed to hash initial admin password with Argon2id"))?;
 
     diesel::insert_into(schema::rp_users::table)
         .values((
-            schema::rp_users::username.eq(generate_random_string(rng.gen_range(6..12))),
-            schema::rp_users::password.eq(sha1_salt(password, salt)),
-            schema::rp_users::salt.eq(salt_clone),
-            schema::rp_users::initial_password.eq(password_clone),
+            schema::rp_users::username.eq(&username),
+            schema::rp_users::password.eq(&password_hash),
+            schema::rp_users::salt.eq(""),
             schema::rp_users::authority.eq("admin"),
             schema::rp_users::error_count.eq(0),
             schema::rp_users::status.eq(0),
             schema::rp_users::created_at.eq(now),
             schema::rp_users::updated_at.eq(now),
+            schema::rp_users::password_algo.eq(ALGO_ARGON2ID),
+            schema::rp_users::must_change_password.eq(1),
         ))
         .execute(&mut *conn)
         .map_err(|err| MigrationError::new(format!("Failed to create initial admin user: {err}")))?;
@@ -75,7 +83,7 @@ fn seed_initial_admin_if_empty(pool: &DBPool) -> Result<(), MigrationError> {
     fs::File::create("./panel.lock").map_err(|err| {
         MigrationError::new(format!("Failed to write panel.lock after bootstrap: {err}"))
     })?;
-    Ok(())
+    Ok(Some(BootstrapAdmin { username, password }))
 }
 
 /// Backward-compatible entry used by older call sites; prefer [`migrate_and_bootstrap`].

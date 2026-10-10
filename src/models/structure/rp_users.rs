@@ -17,19 +17,20 @@ pub struct Users {
     pub username: String,
     pub password: String,
     pub salt: String,
-    pub initial_password: String,
     pub authority: String,
     pub error_count: i32,
     pub status: i32,
     pub created_at: chrono::NaiveDateTime,
     pub updated_at: chrono::NaiveDateTime,
-    //pub deleted_at: Option<SystemTime>,
+    pub password_algo: String,
+    pub must_change_password: i32,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SlimUser {
     pub id: i32,
     pub username: String,
+    /// Password hash embedded for legacy JWT validity checks until RP-23 sessions land.
     pub password: String,
     pub authority: String,
     pub created_at: chrono::NaiveDateTime,
@@ -46,4 +47,3 @@ impl From<Users> for SlimUser {
         }
     }
 }
-

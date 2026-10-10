@@ -130,11 +130,13 @@ mod tests {
             .unwrap()
             .batch_execute(
                 "INSERT INTO rp_users (
-                    username, password, salt, initial_password, authority,
-                    error_count, status, created_at, updated_at
+                    username, password, salt, authority,
+                    error_count, status, created_at, updated_at,
+                    password_algo, must_change_password
                 ) VALUES (
-                    'backup-user', 'hash', 'salt', '', 'admin', 0, 0,
-                    '2026-10-10 00:00:00', '2026-10-10 00:00:00'
+                    'backup-user', 'hash', 'salt', 'admin', 0, 0,
+                    '2026-10-10 00:00:00', '2026-10-10 00:00:00',
+                    'sha1', 0
                 );",
             )
             .unwrap();

@@ -16,13 +16,17 @@ use std::{
 
 use crate::{
     api::{
-        auth::{generate_jwt, verify_password_sha1, AuthUser},
+        auth::{generate_jwt, AuthUser},
         ResponseStructure, ResponseStructureError,
     },
     common::fun::sm4_decrypt_login,
     errors::common::CommonError,
     models::user::find_user_update_error_count,
-    service::{db::DBPool, global::CONF},
+    service::{
+        db::DBPool,
+        global::CONF,
+        password::{self, ALGO_ARGON2ID},
+    },
 };
 use serde::{Deserialize, Serialize};
 
@@ -83,7 +87,9 @@ pub async fn sign(
             timestamp: 0,
         };
 
-        let user = web::block(move || query(user_data, pool)).await??;
+        let db_user = web::block(move || query(user_data, pool)).await??;
+        let must_change_password = db_user.must_change_password != 0;
+        let user: AuthUser = db_user.into();
 
         //   Identity::login(&req.extensions(), serde_json::to_string(&user).unwrap()).unwrap();
         //返回Cookies
@@ -127,7 +133,12 @@ pub async fn sign(
                 message: String::from("success"),
                 data: Some(LoginSuccessData {
                     token: token_val,
-                    user: serde_json::json!({"id":user.id,"username":user.username,"authority":user.authority})
+                    user: serde_json::json!({
+                        "id": user.id,
+                        "username": user.username,
+                        "authority": user.authority,
+                        "must_change_password": must_change_password,
+                    })
                 }),
               
             }));
@@ -173,7 +184,10 @@ pub async fn get_security_dir(
     }
 }
 
-fn query(auth_data: LoginAuthData, pool: web::Data<DBPool>) -> Result<AuthUser, CommonError> {
+fn query(
+    auth_data: LoginAuthData,
+    pool: web::Data<DBPool>,
+) -> Result<crate::models::structure::rp_users::Users, CommonError> {
     use crate::models::structure::{
         rp_users::Users,
         schema::rp_users::dsl::{rp_users, status, username},
@@ -193,11 +207,7 @@ fn query(auth_data: LoginAuthData, pool: web::Data<DBPool>) -> Result<AuthUser, 
         .filter(username.eq(&auth_data.username))
         .load::<Users>(&mut conn)?;
 
-    // let items = rp_users::table
-    //     .filter(rp_users::username.eq(auth_data.username))
-    //     .first::<Users>(&mut *conn);
-
-    if let Some(user) = items.pop() {
+    if let Some(mut user) = items.pop() {
         if user.status != 0 {
             return Err(CommonError::Unauthorized("Invalid credentials".into()));
         }
@@ -209,24 +219,41 @@ fn query(auth_data: LoginAuthData, pool: web::Data<DBPool>) -> Result<AuthUser, 
                 CommonError::BadRequest(String::from(t!("auth.login.username_band"))).into(),
             );
         }
-        if let Ok(matching) = verify_password_sha1(&user.password, &user.salt, &auth_data.password)
-        {
-            if matching {
-                let _ = find_user_update_error_count(user.id, 0, &mut conn)?;
-                return Ok(user.into());
-            } else {
-                let _ = find_user_update_error_count(user.id, user.error_count + 1, &mut conn)?;
-                return Err(CommonError::BadRequest(String::from(
-                    t!("auth.login.password_error",count=> 5 - (user.error_count+1)),
-                ))
-                .into());
-            }
-        } else {
-            return Err(CommonError::BadRequest(String::from(
+        let (matching, should_rehash) = password::verify_stored(
+            &user.password,
+            &user.salt,
+            &user.password_algo,
+            &auth_data.password,
+        )
+        .map_err(|_| {
+            CommonError::BadRequest(String::from(
                 t!("auth.login.password_error",count=> 5 - (user.error_count+1)),
             ))
-            .into());
+        })?;
+        if matching {
+            let _ = find_user_update_error_count(user.id, 0, &mut conn)?;
+            if should_rehash {
+                let new_hash = password::hash_argon2id(&auth_data.password).map_err(|_| {
+                    CommonError::InternalServerError("Failed to upgrade password hash".into())
+                })?;
+                diesel::update(rp_users.find(user.id))
+                    .set((
+                        crate::models::structure::schema::rp_users::password.eq(&new_hash),
+                        crate::models::structure::schema::rp_users::salt.eq(""),
+                        crate::models::structure::schema::rp_users::password_algo.eq(ALGO_ARGON2ID),
+                    ))
+                    .execute(&mut conn)?;
+                user.password = new_hash;
+                user.salt.clear();
+                user.password_algo = ALGO_ARGON2ID.to_owned();
+            }
+            return Ok(user);
         }
+        let _ = find_user_update_error_count(user.id, user.error_count + 1, &mut conn)?;
+        return Err(CommonError::BadRequest(String::from(
+            t!("auth.login.password_error",count=> 5 - (user.error_count+1)),
+        ))
+        .into());
     }
     Err(CommonError::BadRequest(String::from(t!("auth.login.username_error"))).into())
 }
@@ -234,32 +261,97 @@ fn query(auth_data: LoginAuthData, pool: web::Data<DBPool>) -> Result<AuthUser, 
 #[cfg(test)]
 mod tests {
     use super::{query, LoginAuthData};
-    use crate::{common::fun::sha1_salt, errors::common::CommonError, service::db::DBPool};
+    use crate::{
+        common::fun::sha1_salt,
+        errors::common::CommonError,
+        repository::migrations,
+        service::{db::DBPool, password::ALGO_SHA1},
+    };
     use actix_web::web;
     use diesel::{connection::SimpleConnection, r2d2::ConnectionManager, SqliteConnection};
 
+    fn pool() -> DBPool {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        // Leak the temp path for the pool lifetime in this unit test process.
+        let path = file.into_temp_path();
+        let path_str = path.to_str().unwrap().to_owned();
+        std::mem::forget(path);
+        DBPool::builder()
+            .max_size(1)
+            .build(ConnectionManager::<SqliteConnection>::new(path_str))
+            .unwrap()
+    }
+
     #[test]
     fn disabled_account_cannot_log_in_with_the_correct_password() {
-        let file = tempfile::NamedTempFile::new().unwrap();
-        let pool = DBPool::builder().max_size(1)
-            .build(ConnectionManager::<SqliteConnection>::new(file.path().to_str().unwrap())).unwrap();
+        let pool = pool();
+        migrations::migrate(&pool).unwrap();
         let password_hash = sha1_salt("test-password".into(), "test-salt".into());
-        pool.get().unwrap().batch_execute(&format!(
-            "CREATE TABLE rp_users (
-                id INTEGER PRIMARY KEY, username TEXT NOT NULL, password TEXT NOT NULL,
-                salt TEXT NOT NULL, initial_password TEXT NOT NULL, authority TEXT NOT NULL,
-                error_count INTEGER NOT NULL, status INTEGER NOT NULL,
-                created_at TIMESTAMP NOT NULL, updated_at TIMESTAMP NOT NULL
-            ); INSERT INTO rp_users VALUES (
-                1, 'test-user', '{password_hash}', 'test-salt', '', 'user', 0, -1,
-                '2026-10-10 00:00:00', '2026-10-10 00:00:00'
-            );"
-        )).unwrap();
+        pool.get()
+            .unwrap()
+            .batch_execute(&format!(
+                "INSERT INTO rp_users (
+                    username, password, salt, authority, error_count, status,
+                    created_at, updated_at, password_algo, must_change_password
+                ) VALUES (
+                    'test-user', '{password_hash}', 'test-salt', 'user', 0, -1,
+                    '2026-10-10 00:00:00', '2026-10-10 00:00:00', '{ALGO_SHA1}', 0
+                );"
+            ))
+            .unwrap();
         let credentials = || LoginAuthData {
-            username: "test-user".into(), password: "test-password".into(), timestamp: 0,
+            username: "test-user".into(),
+            password: "test-password".into(),
+            timestamp: 0,
         };
-        assert!(matches!(query(credentials(), web::Data::new(pool.clone())), Err(CommonError::Unauthorized(_))));
-        pool.get().unwrap().batch_execute("UPDATE rp_users SET status=0").unwrap();
+        assert!(matches!(
+            query(credentials(), web::Data::new(pool.clone())),
+            Err(CommonError::Unauthorized(_))
+        ));
+        pool.get()
+            .unwrap()
+            .batch_execute("UPDATE rp_users SET status=0")
+            .unwrap();
         assert!(query(credentials(), web::Data::new(pool)).is_ok());
+    }
+
+    #[test]
+    fn successful_sha1_login_rehashes_to_argon2id() {
+        let pool = pool();
+        migrations::migrate(&pool).unwrap();
+        let password_hash = sha1_salt("migrate-me".into(), "old-salt".into());
+        pool.get()
+            .unwrap()
+            .batch_execute(&format!(
+                "INSERT INTO rp_users (
+                    username, password, salt, authority, error_count, status,
+                    created_at, updated_at, password_algo, must_change_password
+                ) VALUES (
+                    'legacy-user', '{password_hash}', 'old-salt', 'user', 0, 0,
+                    '2026-10-10 00:00:00', '2026-10-10 00:00:00', '{ALGO_SHA1}', 0
+                );"
+            ))
+            .unwrap();
+        let user = query(
+            LoginAuthData {
+                username: "legacy-user".into(),
+                password: "migrate-me".into(),
+                timestamp: 0,
+            },
+            web::Data::new(pool.clone()),
+        )
+        .unwrap();
+        assert_eq!(user.password_algo, "argon2id");
+        assert!(user.password.starts_with("$argon2id$"));
+        // Second login still works with the upgraded hash.
+        assert!(query(
+            LoginAuthData {
+                username: "legacy-user".into(),
+                password: "migrate-me".into(),
+                timestamp: 0,
+            },
+            web::Data::new(pool),
+        )
+        .is_ok());
     }
 }
