@@ -100,14 +100,24 @@ pub async fn save(
     };
     match file::save_bounded(bound, data.into_inner().content) {
         Ok(_) => {
-            let _ = audit::complete_intent(
+            if let Err(audit_err) = audit::complete_intent(
                 pool.get_ref(),
                 &intent,
                 Outcome::Success,
                 Some(0),
                 json!({"ok": true}),
                 None,
-            );
+            ) {
+                // The file is already written; surface the audit failure
+                // instead of dropping it silently. Reconciliation marks the
+                // intent aborted if the write truly failed.
+                crate::log_error!(
+                    target: "audit",
+                    "audit completion failed for {}: {}",
+                    intent.operation_id,
+                    audit_err.message()
+                );
+            }
             HttpResponse::Ok().json(ResponseStructure {
                 success: true,
                 code: 200,
@@ -119,14 +129,21 @@ pub async fn save(
             })
         }
         Err(err) => {
-            let _ = audit::complete_intent(
+            if let Err(audit_err) = audit::complete_intent(
                 pool.get_ref(),
                 &intent,
                 Outcome::Failure,
                 None,
                 json!({"error": err.to_string()}),
                 None,
-            );
+            ) {
+                crate::log_error!(
+                    target: "audit",
+                    "audit completion failed for {}: {}",
+                    intent.operation_id,
+                    audit_err.message()
+                );
+            }
             HttpResponse::InternalServerError().json(ResponseStructureError {
                 success: false,
                 code: 500,

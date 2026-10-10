@@ -93,7 +93,7 @@ pub async fn execute_audited(
             } else {
                 Outcome::Failure
             };
-            let _ = audit::complete_intent(
+            if let Err(audit_err) = audit::complete_intent(
                 pool,
                 &intent,
                 outcome,
@@ -103,18 +103,35 @@ pub async fn execute_audited(
                     "stderr": result.stderr,
                 }),
                 Some(result.duration_ms as i64),
-            );
+            ) {
+                // The action already ran; report loudly instead of dropping
+                // the outcome. The stale-intent reconciliation will mark the
+                // intent aborted if this write truly failed.
+                crate::log_error!(
+                    target: "audit",
+                    "audit completion failed for {}: {}",
+                    intent.operation_id,
+                    audit_err.message()
+                );
+            }
             Ok(result)
         }
         Err(RunnerError::TimedOut { action, timeout_ms }) => {
-            let _ = audit::complete_intent(
+            if let Err(audit_err) = audit::complete_intent(
                 pool,
                 &intent,
                 Outcome::Timeout,
                 None,
                 json!({"timeout_ms": timeout_ms}),
                 Some(timeout_ms as i64),
-            );
+            ) {
+                crate::log_error!(
+                    target: "audit",
+                    "audit completion failed for {}: {}",
+                    intent.operation_id,
+                    audit_err.message()
+                );
+            }
             Err(AuditedError::Runner(RunnerError::TimedOut {
                 action,
                 timeout_ms,
@@ -126,14 +143,21 @@ pub async fn execute_audited(
             } else {
                 Outcome::Failure
             };
-            let _ = audit::complete_intent(
+            if let Err(audit_err) = audit::complete_intent(
                 pool,
                 &intent,
                 outcome,
                 None,
                 json!({"error": err.message()}),
                 None,
-            );
+            ) {
+                crate::log_error!(
+                    target: "audit",
+                    "audit completion failed for {}: {}",
+                    intent.operation_id,
+                    audit_err.message()
+                );
+            }
             Err(AuditedError::Runner(err))
         }
     }

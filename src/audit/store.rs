@@ -2,7 +2,7 @@
 use diesel::{
     sql_query,
     sql_types::{BigInt, Integer, Nullable, Text},
-    QueryableByName, RunQueryDsl, SqliteConnection,
+    Connection, QueryableByName, RunQueryDsl, SqliteConnection,
 };
 use serde_json::Value;
 
@@ -30,6 +30,12 @@ impl std::fmt::Display for AuditError {
 }
 
 impl std::error::Error for AuditError {}
+
+impl From<diesel::result::Error> for AuditError {
+    fn from(err: diesel::result::Error) -> Self {
+        AuditError::Unavailable(format!("database error: {err}"))
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct IntentSpec {
@@ -151,50 +157,55 @@ pub fn complete_intent_conn(
     detail: Value,
     duration_ms: Option<i64>,
 ) -> Result<(), AuditError> {
-    let status = match outcome {
-        Outcome::Success => "executed",
-        Outcome::Failure | Outcome::Timeout => "failed",
-        Outcome::Rejected => "rejected",
-    };
-    sql_query("UPDATE audit_intents SET status = ?1 WHERE id = ?2")
-        .bind::<Text, _>(status)
-        .bind::<BigInt, _>(intent.id)
-        .execute(conn)
-        .map_err(|e| AuditError::Unavailable(format!("failed to update intent: {e}")))?;
+    // Intent status, event and outbox row must land together; a crash between
+    // them would leave a pending intent with no event or an undeliverable row.
+    conn.transaction(|conn| {
+        let status = match outcome {
+            Outcome::Success => "executed",
+            Outcome::Failure | Outcome::Timeout => "failed",
+            Outcome::Rejected => "rejected",
+        };
+        sql_query("UPDATE audit_intents SET status = ?1 WHERE id = ?2")
+            .bind::<Text, _>(status)
+            .bind::<BigInt, _>(intent.id)
+            .execute(conn)
+            .map_err(|e| AuditError::Unavailable(format!("failed to update intent: {e}")))?;
 
-    let detail_masked = serde_json::to_string(&mask_value(detail)).unwrap_or_else(|_| "{}".into());
-    sql_query(
-        "INSERT INTO audit_events (
+        let detail_masked =
+            serde_json::to_string(&mask_value(detail)).unwrap_or_else(|_| "{}".into());
+        sql_query(
+            "INSERT INTO audit_events (
             intent_id, operation_id, outcome, exit_code, detail_masked, duration_ms, created_at
         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-    )
-    .bind::<BigInt, _>(intent.id)
-    .bind::<Text, _>(&intent.operation_id)
-    .bind::<Text, _>(outcome.as_str())
-    .bind::<Nullable<Integer>, _>(exit_code)
-    .bind::<Text, _>(&detail_masked)
-    .bind::<Nullable<BigInt>, _>(duration_ms)
-    .bind::<Text, _>(now_utc())
-    .execute(conn)
-    .map_err(|e| AuditError::Unavailable(format!("failed to persist audit event: {e}")))?;
+        )
+        .bind::<BigInt, _>(intent.id)
+        .bind::<Text, _>(&intent.operation_id)
+        .bind::<Text, _>(outcome.as_str())
+        .bind::<Nullable<Integer>, _>(exit_code)
+        .bind::<Text, _>(&detail_masked)
+        .bind::<Nullable<BigInt>, _>(duration_ms)
+        .bind::<Text, _>(now_utc())
+        .execute(conn)
+        .map_err(|e| AuditError::Unavailable(format!("failed to persist audit event: {e}")))?;
 
-    let rows: Vec<IdRow> = sql_query("SELECT last_insert_rowid() AS id")
-        .load(conn)
-        .map_err(|e| AuditError::Unavailable(format!("failed to read event id: {e}")))?;
-    let event_id = rows
-        .first()
-        .map(|r| r.id)
-        .ok_or_else(|| AuditError::Unavailable("missing event id".into()))?;
+        let rows: Vec<IdRow> = sql_query("SELECT last_insert_rowid() AS id")
+            .load(conn)
+            .map_err(|e| AuditError::Unavailable(format!("failed to read event id: {e}")))?;
+        let event_id = rows
+            .first()
+            .map(|r| r.id)
+            .ok_or_else(|| AuditError::Unavailable("missing event id".into()))?;
 
-    sql_query(
-        "INSERT INTO audit_outbox (event_id, attempts, next_retry_at, delivered_at, last_error, created_at)
+        sql_query(
+            "INSERT INTO audit_outbox (event_id, attempts, next_retry_at, delivered_at, last_error, created_at)
          VALUES (?1, 0, NULL, NULL, NULL, ?2)",
-    )
-    .bind::<BigInt, _>(event_id)
-    .bind::<Text, _>(now_utc())
-    .execute(conn)
-    .map_err(|e| AuditError::Unavailable(format!("failed to enqueue audit outbox: {e}")))?;
-    Ok(())
+        )
+        .bind::<BigInt, _>(event_id)
+        .bind::<Text, _>(now_utc())
+        .execute(conn)
+        .map_err(|e| AuditError::Unavailable(format!("failed to enqueue audit outbox: {e}")))?;
+        Ok(())
+    })
 }
 
 #[derive(Debug, Clone, QueryableByName)]
@@ -205,6 +216,10 @@ pub struct OutboxRow {
     pub event_id: i64,
     #[diesel(sql_type = Integer)]
     pub attempts: i32,
+    #[diesel(sql_type = Text)]
+    pub operation_id: String,
+    #[diesel(sql_type = Text)]
+    pub outcome: String,
 }
 
 /// Pending outbox rows eligible for (re)delivery.
@@ -213,10 +228,12 @@ pub fn list_pending_outbox(pool: &DBPool, limit: i64) -> Result<Vec<OutboxRow>, 
         AuditError::Unavailable(format!("audit database unavailable: {e}"))
     })?;
     sql_query(
-        "SELECT id, event_id, attempts FROM audit_outbox
-         WHERE delivered_at IS NULL
-           AND (next_retry_at IS NULL OR next_retry_at <= ?1)
-         ORDER BY id ASC
+        "SELECT o.id, o.event_id, o.attempts, e.operation_id, e.outcome
+         FROM audit_outbox o
+         JOIN audit_events e ON e.id = o.event_id
+         WHERE o.delivered_at IS NULL
+           AND (o.next_retry_at IS NULL OR o.next_retry_at <= ?1)
+         ORDER BY o.id ASC
          LIMIT ?2",
     )
     .bind::<Text, _>(now_utc())
@@ -259,10 +276,88 @@ pub fn mark_outbox_retry(
     Ok(())
 }
 
+/// Mark intents still `pending` after `stale_after_secs` as `aborted`: the
+/// process died between begin and complete, and nothing else will finish them.
+pub fn reconcile_stale_intents(
+    pool: &DBPool,
+    stale_after_secs: i64,
+) -> Result<u64, AuditError> {
+    let mut conn = pool.get().map_err(|e| {
+        AuditError::Unavailable(format!("audit database unavailable: {e}"))
+    })?;
+    let cutoff = (chrono::Utc::now() - chrono::Duration::seconds(stale_after_secs))
+        .format("%Y-%m-%d %H:%M:%S%.3f")
+        .to_string();
+    let changed = sql_query(
+        "UPDATE audit_intents SET status = 'aborted'
+         WHERE status = 'pending' AND created_at < ?1",
+    )
+    .bind::<Text, _>(&cutoff)
+    .execute(&mut conn)
+    .map_err(|e| AuditError::Unavailable(format!("failed to reconcile intents: {e}")))?;
+    Ok(changed as u64)
+}
+
+/// Delete outbox rows, events and intents older than `keep_days` (children
+/// first). Delivered rows for recent events are kept.
+pub fn purge_audit(pool: &DBPool, keep_days: i64) -> Result<u64, AuditError> {
+    let mut conn = pool.get().map_err(|e| {
+        AuditError::Unavailable(format!("audit database unavailable: {e}"))
+    })?;
+    let cutoff = (chrono::Utc::now() - chrono::Duration::days(keep_days))
+        .format("%Y-%m-%d %H:%M:%S%.3f")
+        .to_string();
+    conn.transaction(|conn| {
+        let outbox = sql_query(
+            "DELETE FROM audit_outbox WHERE event_id IN (
+             SELECT id FROM audit_events WHERE created_at < ?1)",
+        )
+        .bind::<Text, _>(&cutoff)
+        .execute(conn)
+        .map_err(|e| AuditError::Unavailable(format!("failed to purge outbox: {e}")))?;
+        let events = sql_query("DELETE FROM audit_events WHERE created_at < ?1")
+            .bind::<Text, _>(&cutoff)
+            .execute(conn)
+            .map_err(|e| AuditError::Unavailable(format!("failed to purge events: {e}")))?;
+        // Intents may still have newer events attached (rare); only remove
+        // those whose events are all gone so the FK holds.
+        let intents = sql_query(
+            "DELETE FROM audit_intents
+             WHERE created_at < ?1
+               AND NOT EXISTS (SELECT 1 FROM audit_events e WHERE e.intent_id = audit_intents.id)",
+        )
+        .bind::<Text, _>(&cutoff)
+        .execute(conn)
+        .map_err(|e| AuditError::Unavailable(format!("failed to purge intents: {e}")))?;
+        Ok((outbox + events + intents) as u64)
+    })
+}
+
+/// Deliver pending outbox rows to the interim sink (the panel log) and mark
+/// them delivered. The RP-28 notification worker replaces this sink later.
+pub fn deliver_pending_outbox(pool: &DBPool, limit: i64) -> Result<usize, AuditError> {
+    let pending = list_pending_outbox(pool, limit)?;
+    let mut delivered = 0;
+    for row in &pending {
+        crate::log_info!(
+            target: "audit_outbox",
+            "audit event delivered: operation_id={} event_id={} outcome={} attempts={}",
+            row.operation_id,
+            row.event_id,
+            row.outcome,
+            row.attempts
+        );
+        mark_outbox_delivered(pool, row.id)?;
+        delivered += 1;
+    }
+    Ok(delivered)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::repository::migrations;
+    use diesel::connection::SimpleConnection;
     use diesel::r2d2::ConnectionManager;
     use serde_json::json;
     use std::time::Duration;
@@ -354,5 +449,149 @@ mod tests {
         mark_outbox_retry(&pool, pending[0].id, "sink down", "2099-01-01 00:00:00.000").unwrap();
         // Future next_retry_at => not listed yet.
         assert!(list_pending_outbox(&pool, 10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn deliver_pending_outbox_marks_rows_delivered() {
+        let (_f, pool) = pool();
+        let intent = begin_intent(
+            &pool,
+            IntentSpec {
+                operation_id: "op-deliver".into(),
+                actor_id: Some(1),
+                request_id: None,
+                action: "systemctl.restart".into(),
+                resource: Some("nginx".into()),
+                params: json!({}),
+                ip: None,
+            },
+        )
+        .unwrap();
+        complete_intent(&pool, &intent, Outcome::Success, Some(0), json!({}), None).unwrap();
+        assert_eq!(list_pending_outbox(&pool, 10).unwrap().len(), 1);
+        assert_eq!(deliver_pending_outbox(&pool, 10).unwrap(), 1);
+        assert!(list_pending_outbox(&pool, 10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn stale_pending_intents_are_reconciled_to_aborted() {
+        let (_f, pool) = pool();
+        let stale = begin_intent(
+            &pool,
+            IntentSpec {
+                operation_id: "op-stale".into(),
+                actor_id: None,
+                request_id: None,
+                action: "file.save".into(),
+                resource: None,
+                params: json!({}),
+                ip: None,
+            },
+        )
+        .unwrap();
+        // Backdate the intent beyond the stale window.
+        let mut conn = pool.get().unwrap();
+        sql_query("UPDATE audit_intents SET created_at = '2000-01-01 00:00:00.000' WHERE id = ?1")
+            .bind::<BigInt, _>(stale.id)
+            .execute(&mut conn)
+            .unwrap();
+        drop(conn);
+
+        let fresh = begin_intent(
+            &pool,
+            IntentSpec {
+                operation_id: "op-fresh".into(),
+                actor_id: None,
+                request_id: None,
+                action: "file.save".into(),
+                resource: None,
+                params: json!({}),
+                ip: None,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(reconcile_stale_intents(&pool, 3600).unwrap(), 1);
+        #[derive(QueryableByName)]
+        struct StatusRow {
+            #[diesel(sql_type = Text)]
+            status: String,
+        }
+        let mut conn = pool.get().unwrap();
+        let stale_row: Vec<StatusRow> =
+            sql_query("SELECT status AS status FROM audit_intents WHERE id = ?1")
+                .bind::<BigInt, _>(stale.id)
+                .load(&mut conn)
+                .unwrap();
+        let fresh_row: Vec<StatusRow> =
+            sql_query("SELECT status AS status FROM audit_intents WHERE id = ?1")
+                .bind::<BigInt, _>(fresh.id)
+                .load(&mut conn)
+                .unwrap();
+        assert_eq!(stale_row[0].status, "aborted");
+        assert_eq!(fresh_row[0].status, "pending");
+    }
+
+    #[test]
+    fn purge_audit_removes_only_old_rows() {
+        let (_f, pool) = pool();
+        let old = begin_intent(
+            &pool,
+            IntentSpec {
+                operation_id: "op-old".into(),
+                actor_id: None,
+                request_id: None,
+                action: "file.save".into(),
+                resource: None,
+                params: json!({}),
+                ip: None,
+            },
+        )
+        .unwrap();
+        complete_intent(&pool, &old, Outcome::Success, Some(0), json!({}), None).unwrap();
+        let new = begin_intent(
+            &pool,
+            IntentSpec {
+                operation_id: "op-new".into(),
+                actor_id: None,
+                request_id: None,
+                action: "file.save".into(),
+                resource: None,
+                params: json!({}),
+                ip: None,
+            },
+        )
+        .unwrap();
+        complete_intent(&pool, &new, Outcome::Success, Some(0), json!({}), None).unwrap();
+
+        // Backdate the old intent/event/outbox trio.
+        let mut conn = pool.get().unwrap();
+        conn.batch_execute(&format!(
+            "UPDATE audit_intents SET created_at = '2000-01-01 00:00:00.000' WHERE id = {old_id};
+             UPDATE audit_events SET created_at = '2000-01-01 00:00:00.000' WHERE intent_id = {old_id};
+             UPDATE audit_outbox SET created_at = '2000-01-01 00:00:00.000'
+             WHERE event_id IN (SELECT id FROM audit_events WHERE intent_id = {old_id});",
+            old_id = old.id
+        ))
+        .unwrap();
+        drop(conn);
+
+        let purged = purge_audit(&pool, 90).unwrap();
+        assert!(purged >= 3, "old intent+event+outbox removed, got {purged}");
+        #[derive(QueryableByName)]
+        struct CountRow2 {
+            #[diesel(sql_type = BigInt)]
+            count: i64,
+        }
+        let mut conn = pool.get().unwrap();
+        let intents: Vec<CountRow2> =
+            sql_query("SELECT COUNT(*) AS count FROM audit_intents").load(&mut conn).unwrap();
+        let events: Vec<CountRow2> =
+            sql_query("SELECT COUNT(*) AS count FROM audit_events").load(&mut conn).unwrap();
+        let outbox: Vec<CountRow2> =
+            sql_query("SELECT COUNT(*) AS count FROM audit_outbox").load(&mut conn).unwrap();
+        assert_eq!(intents[0].count, 1, "recent intent kept");
+        assert_eq!(events[0].count, 1, "recent event kept");
+        assert_eq!(outbox[0].count, 1, "recent outbox kept");
     }
 }
