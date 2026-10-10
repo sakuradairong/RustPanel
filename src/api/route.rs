@@ -128,7 +128,17 @@ pub fn v1() -> actix_web::Scope {
                     .service(web::resource("/upload").route(web::post().to(v1::ssl::upload_certificate)))
                     .service(web::resource("/self-signed").route(web::post().to(v1::ssl::self_signed_certificate)))
             )
-            .service(web::resource("/monitor").route(web::get().to(v1::monitor::monitor_sse)))
+            .service(
+                web::scope("/monitor")
+                    .service(
+                        web::resource("")
+                            .route(web::get().to(v1::monitor::monitor_sse)),
+                    )
+                    .service(
+                        web::resource("/tickets")
+                            .route(web::post().to(v1::monitor::issue_sse_ticket)),
+                    ),
+            )
             .service(
                 web::scope("/installer")
                     .service(web::resource("/list").route(web::get().to(v1::installer::list_software)))

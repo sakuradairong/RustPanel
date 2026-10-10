@@ -18,3 +18,4 @@ pub mod sessions;
 pub mod rate_limit;
 pub mod rbac;
 pub mod path_bounds;
+pub mod sse_tickets;

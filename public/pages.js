@@ -1030,7 +1030,7 @@ async function loadLogContent(filePath){
 }
 
 // ── Real-Time Monitor ──
-function renderMonitor(){
+async function renderMonitor(){
   const c=document.getElementById('content');
   if(!c)return;
 
@@ -1075,8 +1075,10 @@ function renderMonitor(){
   </div>`;
 
   try{
-    const token=getToken();
-    const url=apiUrl('/monitor')+'?token='+encodeURIComponent(token||'');
+    const ticketResp=await api('/monitor/tickets',{method:'POST',body:JSON.stringify({stream:'monitor'})});
+    const ticket=ticketResp&&ticketResp.data&&ticketResp.data.ticket;
+    if(!ticket)throw new Error('Failed to obtain SSE ticket');
+    const url=apiUrl('/monitor')+'?ticket='+encodeURIComponent(ticket);
     monitorEventSource=new EventSource(url);
 
     monitorEventSource.onmessage=function(e){

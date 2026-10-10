@@ -9,7 +9,7 @@
 | RP-04 SSL 敏感路由立即认证 | 已实现并验证 | 所有 SSL handler 认证；写操作暂用当前 admin 角色 | 资源范围 RBAC 属 RP-03 |
 | RP-02 fail-closed / 禁用检查 | 已实现并验证 | 查询错误/池耗尽返回 503；禁用/不存在/改密拒绝；以 DB 角色授权 | 见 RP-23 会话撤销 |
 | RP-25 消除公开密钥默认回退 | 已实现并验证 | 强制独立环境变量、长度/空白/旧默认值校验；监听前拒启 | 实例自动生成/受限文件加载和完整轮换仍需 bootstrap 扩展 |
-| RP-05 SSE 一次性票据 | 部分 | 建连认证复用 DB 状态检查与会话语义 | 一次性票据、活动连接周期撤销、URL 去长期 JWT 未实施 |
+| RP-05 SSE 一次性票据 | 已实现并验证（见第九批） | 建连认证复用 DB；一次性票据/禁 query JWT/周期撤销见第九批 | — |
 | RP-11 可复现依赖 | 部分 | 提交 Cargo.lock；约束 sysinfo/bollard；声明 Rust 1.88，CI --locked | 漏洞/许可扫描、SBOM、签名和双架构仍待实施 |
 
 兼容变更和部署步骤见[安全密钥配置](security-bootstrap.md)。
@@ -34,7 +34,7 @@
 
 要点：
 
-- Schema 期望版本在 RP-23 时为 **3**；RP-03 为 **4**；RP-09 起为 **5**。
+- Schema 期望版本：RP-23=**3**，RP-03=**4**，RP-09=**5**，RP-05=**6**。
 - 旧版把 password 哈希放进 JWT `sub` 的令牌不再被接受，用户需重新登录。
 - 访问令牌不再包含口令字段。
 
@@ -84,10 +84,23 @@
 | --- | --- | --- | --- |
 | RP-09 审计 intent/outbox/脱敏 | 已实现并验证 | 迁移 `005_audit`：`audit_intents`/`audit_events`/`audit_outbox`；高危动作先持久化 intent，失败则 503 拒绝执行；params/detail 脱敏；结果入 outbox 可重投；firewall/service 经 `execute_audited`，file save 挂 intent | 异步投递 worker、installer/ssl/docker 全覆盖、PTY 会话录制属后续 |
 
+## 第九批：RP-05 一次性 SSE 票据
+
+| 任务 | 状态 | 本次实现 | 后续边界 |
+| --- | --- | --- | --- |
+| RP-05 一次性 SSE 票据与连接撤销 | 已实现并验证 | 迁移 `006_sse_tickets`；`POST /monitor/tickets` 签发 ≤60s 一次性 stream 绑定票据；`GET /monitor?ticket=` 原子兑换；拒绝 `?token=` 长期 JWT；Bearer 头仍可用；流内周期校验账号禁用并关闭；前端改走票据 | 慢客户端背压/连接配额属后续；jobs SSE 可复用同一表 |
+
+## 验证范围（累计）
+
+- 既有安全集成测试 + file_bounds / privileged_runner / 审计单测。
+- SSE：query JWT 401；票据一次性；错 stream 拒绝；兑换后复用 401。
+
+构建和测试命令：`cargo test --locked`；本批结果为 57 个测试全部通过（40 个库测试 + 17 个集成测试）。系统级 TLS、ACME、浏览器回归和跨架构尚未验证。
+
 ## 接下来
 
-1. RP-05 补齐一次性 SSE 票据；RP-10 TLS/bootstrap/CSRF；RP-11 audit/deny/SBOM。
-2. RP-08 秘密存储；RP-07 后续：socket runner / 降权部署。
+1. RP-10 TLS/bootstrap/CSRF；RP-11 audit/deny/SBOM；RP-08 秘密存储。
+2. RP-07 后续：socket runner / 降权部署。
 3. RP-23 增强：refresh 轮换与会话过期清理任务。
 
 未完成全部 M0 前，不把已落地修复称为“生产安全已完成”。

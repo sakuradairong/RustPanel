@@ -288,9 +288,11 @@ async function renderDashboard(){
     let prevNet={};
     nets.forEach(n=>{prevNet[n.name]={rx:n.total_received||0,tx:n.total_transmitted||0}});
 
-    // Open SSE for live CPU/Memory/Swap/Network updates
-    const token=getToken();
-    dashboardEventSource = new EventSource('/api/v1/monitor?token='+encodeURIComponent(token));
+    // Open SSE via one-time ticket (JWT must not appear in the EventSource URL)
+    const ticketResp=await api('/monitor/tickets',{method:'POST',body:JSON.stringify({stream:'monitor'})});
+    const ticket=ticketResp&&ticketResp.data&&ticketResp.data.ticket;
+    if(!ticket)throw new Error('Failed to obtain SSE ticket');
+    dashboardEventSource = new EventSource('/api/v1/monitor?ticket='+encodeURIComponent(ticket));
     dashboardEventSource.onmessage=function(ev){
       try{
         const s=JSON.parse(ev.data);
