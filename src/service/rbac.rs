@@ -40,6 +40,11 @@ pub fn user_has_permission(
     user_id: i32,
     permission: &str,
 ) -> Result<bool, CommonError> {
+    // Role rows are the single source of truth. Every creation path
+    // (migration mapping, create_user, update_user) assigns roles, and a
+    // user without role rows holds nothing — removing the legacy authority
+    // fallback means demoting an admin no longer requires touching the
+    // legacy column.
     let rows: Vec<CountRow> = sql_query(
         "SELECT COUNT(*) AS count
          FROM user_roles ur
@@ -51,29 +56,7 @@ pub fn user_has_permission(
     .bind::<Text, _>(permission)
     .load(conn)
     .map_err(|_| CommonError::ServiceUnavailable("Authorization database unavailable".into()))?;
-    if rows.first().map(|row| row.count > 0).unwrap_or(false) {
-        return Ok(true);
-    }
-    // Compatibility: users created before role assignment still honor legacy authority.
-    #[derive(QueryableByName)]
-    struct AuthorityRow {
-        #[diesel(sql_type = Text)]
-        authority: String,
-    }
-    let authority: Vec<AuthorityRow> =
-        sql_query("SELECT authority FROM rp_users WHERE id = ?1 LIMIT 1")
-            .bind::<BigInt, _>(i64::from(user_id))
-            .load(conn)
-            .map_err(|_| {
-                CommonError::ServiceUnavailable("Authorization database unavailable".into())
-            })?;
-    let Some(row) = authority.first() else {
-        return Ok(false);
-    };
-    if row.authority == "admin" {
-        return Ok(true);
-    }
-    Ok(false)
+    Ok(rows.first().map(|row| row.count > 0).unwrap_or(false))
 }
 
 pub fn require_perm(pool: &DBPool, user: &AuthUser, permission: &str) -> Result<(), CommonError> {
