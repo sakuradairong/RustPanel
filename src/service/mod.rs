@@ -20,3 +20,4 @@ pub mod rbac;
 pub mod path_bounds;
 pub mod sse_tickets;
 pub mod bind_policy;
+pub mod maintenance;

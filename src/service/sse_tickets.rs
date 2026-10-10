@@ -45,6 +45,23 @@ fn new_jti() -> String {
     format!("sse-{suffix}")
 }
 
+/// Maximum unconsumed tickets a single user may hold; reissues beyond this
+/// are rejected so authenticated minting cannot grow the table unthrottled.
+const MAX_LIVE_TICKETS_PER_USER: i64 = 10;
+
+/// Delete consumed and expired tickets.
+pub fn purge_stale(conn: &mut SqliteConnection) -> Result<u64, CommonError> {
+    let changed = sql_query(
+        "DELETE FROM sse_tickets
+         WHERE consumed_at_unix IS NOT NULL
+            OR expires_at_unix <= ?1",
+    )
+    .bind::<BigInt, _>(now_unix())
+    .execute(conn)
+    .map_err(|_| CommonError::ServiceUnavailable("SSE ticket store unavailable".into()))?;
+    Ok(changed as u64)
+}
+
 /// Issue a one-time ticket bound to `user_id` + `stream`.
 pub fn issue_ticket(
     conn: &mut SqliteConnection,
@@ -60,6 +77,21 @@ pub fn issue_ticket(
     let ttl = ttl_secs.clamp(5, 60);
     let jti = new_jti();
     let expires_at = now_unix() + ttl;
+    // Drop this user's dead tickets, then enforce a live-ticket cap.
+    purge_stale(conn)?;
+    let live: Vec<CountRow> = sql_query(
+        "SELECT COUNT(*) AS count FROM sse_tickets
+         WHERE user_id = ?1 AND consumed_at_unix IS NULL AND expires_at_unix > ?2",
+    )
+    .bind::<Integer, _>(user_id)
+    .bind::<BigInt, _>(now_unix())
+    .load(conn)
+    .map_err(|_| CommonError::ServiceUnavailable("SSE ticket store unavailable".into()))?;
+    if live.first().map(|r| r.count).unwrap_or(0) >= MAX_LIVE_TICKETS_PER_USER {
+        return Err(CommonError::TooManyRequests(
+            "Too many live SSE tickets; consume or wait for expiry".into(),
+        ));
+    }
     sql_query(
         "INSERT INTO sse_tickets (jti, user_id, stream, expires_at_unix, consumed_at_unix, created_at)
          VALUES (?1, ?2, ?3, ?4, NULL, ?5)",
@@ -191,5 +223,63 @@ mod tests {
             consume_ticket(&mut conn, &other, MONITOR_STREAM).unwrap(),
             1
         );
+    }
+
+    #[test]
+    fn ticket_issuance_is_capped_and_stale_rows_purged() {
+        let (_f, pool) = pool_with_user();
+        let mut conn = pool.get().unwrap();
+        for _ in 0..MAX_LIVE_TICKETS_PER_USER {
+            issue_ticket(&mut conn, 1, MONITOR_STREAM, 60).unwrap();
+        }
+        // Live-ticket cap reached: further issuance is rejected, not queued.
+        assert!(matches!(
+            issue_ticket(&mut conn, 1, MONITOR_STREAM, 60),
+            Err(CommonError::TooManyRequests(_))
+        ));
+        // Consuming one ticket frees capacity (purge removes the dead row).
+        #[derive(QueryableByName)]
+        struct JtiRow {
+            #[diesel(sql_type = Text)]
+            jti: String,
+        }
+        let rows: Vec<CountRow> = sql_query(
+            "SELECT COUNT(*) AS count FROM sse_tickets WHERE consumed_at_unix IS NULL",
+        )
+        .load(&mut conn)
+        .unwrap();
+        assert_eq!(rows[0].count, MAX_LIVE_TICKETS_PER_USER);
+        let any: Vec<JtiRow> = sql_query("SELECT jti FROM sse_tickets LIMIT 1")
+            .load(&mut conn)
+            .unwrap();
+        consume_ticket(&mut conn, &any[0].jti.as_str(), MONITOR_STREAM).unwrap();
+        issue_ticket(&mut conn, 1, MONITOR_STREAM, 60).unwrap();
+
+        // Consumed rows are removed by the next purge/issue cycle.
+        let rows: Vec<CountRow> = sql_query(
+            "SELECT COUNT(*) AS count FROM sse_tickets WHERE consumed_at_unix IS NOT NULL",
+        )
+        .load(&mut conn)
+        .unwrap();
+        assert_eq!(rows[0].count, 0, "consumed tickets must be purged on issue");
+    }
+
+    #[test]
+    fn purge_stale_removes_consumed_and_expired() {
+        let (_f, pool) = pool_with_user();
+        let mut conn = pool.get().unwrap();
+        let (a, _) = issue_ticket(&mut conn, 1, MONITOR_STREAM, 60).unwrap();
+        let (b, _) = issue_ticket(&mut conn, 1, MONITOR_STREAM, 5).unwrap();
+        consume_ticket(&mut conn, &a, MONITOR_STREAM).unwrap();
+        // Force-expire the second ticket.
+        sql_query("UPDATE sse_tickets SET expires_at_unix = 1 WHERE jti = ?1")
+            .bind::<Text, _>(&b)
+            .execute(&mut conn)
+            .unwrap();
+        assert_eq!(purge_stale(&mut conn).unwrap(), 2);
+        let rows: Vec<CountRow> = sql_query("SELECT COUNT(*) AS count FROM sse_tickets")
+            .load(&mut conn)
+            .unwrap();
+        assert_eq!(rows[0].count, 0);
     }
 }

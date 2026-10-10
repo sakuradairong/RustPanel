@@ -70,6 +70,9 @@ async fn main() -> std::io::Result<()> {
     })?;
     let _ = test::demo(&pool).await;
 
+    // Audit outbox delivery + retention purges run until RP-12 provides jobs.
+    tokio::spawn(rust_panel::service::maintenance::run_forever(pool.clone()));
+
     if let Err(err) = rust_panel::service::bind_policy::validate_bind_host(&CONF.app.host) {
         log_error!("{}", err);
         std::process::exit(1);

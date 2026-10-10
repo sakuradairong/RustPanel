@@ -25,6 +25,9 @@ pub enum CommonError {
     #[display(fmt = "BadRequest: {_0}")]
     BadRequest(String),
 
+    #[display(fmt = "Too Many Requests: {_0}")]
+    TooManyRequests(String),
+
     #[display(fmt = "Unauthorized")]
     Unauthorized(String),
 
@@ -55,6 +58,12 @@ impl ResponseError for CommonError {
                 .json(ResponseStructureError {
                     success: false,
                     code: 400,
+                    message: String::from(message),
+                }),
+            CommonError::TooManyRequests(ref message) => HttpResponse::TooManyRequests()
+                .json(ResponseStructureError {
+                    success: false,
+                    code: 429,
                     message: String::from(message),
                 }),
             CommonError::ServiceUnavailable(ref message) => HttpResponse::ServiceUnavailable()
