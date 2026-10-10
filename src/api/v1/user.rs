@@ -8,6 +8,7 @@
  */
 
 use actix_web::{web, HttpResponse, ResponseError};
+use diesel::connection::SimpleConnection;
 use diesel::prelude::*;
 use serde::Deserialize;
 
@@ -74,20 +75,44 @@ pub async fn change_password(
         let hash = password::hash_argon2id(&new_password).map_err(|_| {
             crate::errors::common::CommonError::InternalServerError("Failed to hash password".into())
         })?;
-        diesel::update(rp_users::table.find(user_id))
-            .set((
-                rp_users::password.eq(&hash),
-                rp_users::salt.eq(""),
-                rp_users::password_algo.eq(ALGO_ARGON2ID),
-                rp_users::must_change_password.eq(0),
-            ))
-            .execute(&mut *conn)
-            .map_err(|e| {
-                crate::errors::common::CommonError::InternalServerError(e.to_string())
+        conn.batch_execute("BEGIN IMMEDIATE").map_err(|e| {
+            crate::errors::common::CommonError::InternalServerError(e.to_string())
+        })?;
+        let committed = (|| -> Result<(), crate::errors::common::CommonError> {
+            diesel::update(rp_users::table.find(user_id))
+                .set((
+                    rp_users::password.eq(&hash),
+                    rp_users::salt.eq(""),
+                    rp_users::password_algo.eq(ALGO_ARGON2ID),
+                    rp_users::must_change_password.eq(0),
+                ))
+                .execute(&mut *conn)
+                .map_err(|e| {
+                    crate::errors::common::CommonError::InternalServerError(e.to_string())
+                })?;
+            // Revocation is part of the password change, not best-effort
+            // follow-up: if it fails the transaction rolls back so the old
+            // password and its tokens stay a consistent pair.
+            sessions::bump_token_version(&mut conn, user_id).map_err(|err| {
+                crate::errors::common::CommonError::InternalServerError(err)
             })?;
-        let _ = sessions::bump_token_version(&mut conn, user_id);
-        let _ = sessions::revoke_all_for_user(&mut conn, user_id);
-        Ok(())
+            sessions::revoke_all_for_user(&mut conn, user_id).map_err(|err| {
+                crate::errors::common::CommonError::InternalServerError(err)
+            })?;
+            Ok(())
+        })();
+        match committed {
+            Ok(()) => {
+                conn.batch_execute("COMMIT").map_err(|e| {
+                    crate::errors::common::CommonError::InternalServerError(e.to_string())
+                })?;
+                Ok(())
+            }
+            Err(err) => {
+                let _ = conn.batch_execute("ROLLBACK");
+                Err(err)
+            }
+        }
     })
     .await
     {

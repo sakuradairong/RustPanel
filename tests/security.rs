@@ -472,3 +472,155 @@ fn panel_refuses_missing_master_key_even_when_signing_keys_valid() {
     assert!(!directory.path().join("runtime").exists());
     assert!(!directory.path().join("data.db3").exists());
 }
+
+#[actix_web::test]
+async fn admin_password_reset_revokes_existing_tokens() {
+    let (_file, pool) = database(true);
+    pool.get()
+        .unwrap()
+        .batch_execute(
+            "INSERT INTO rp_users (
+            username, password, salt, authority, error_count, status,
+            created_at, updated_at, password_algo, must_change_password, token_version
+        ) VALUES (
+            'admin2', 'test-password-hash', 'test-salt', 'admin', 0, 0,
+            '2026-10-10 00:00:00', '2026-10-10 00:00:00', 'sha1', 0, 0
+        );
+        INSERT OR IGNORE INTO user_roles (user_id, role_id)
+        SELECT id, 1 FROM rp_users WHERE username = 'admin2';",
+        )
+        .unwrap();
+    let admin_bearer = token_for(&pool, 2, 0, 3600);
+    let victim_bearer = token_for(&pool, 1, 0, 3600);
+    let app = actix_test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool.clone()))
+            .service(api::route::v1()),
+    )
+    .await;
+
+    // The victim's token works before the reset.
+    let request = actix_test::TestRequest::get()
+        .uri("/api/v1/user/me")
+        .insert_header(("Authorization", format!("Bearer {victim_bearer}")))
+        .to_request();
+    assert_eq!(
+        actix_test::call_service(&app, request).await.status(),
+        StatusCode::OK
+    );
+
+    let request = actix_test::TestRequest::post()
+        .uri("/api/v1/admin/users/1/reset-password")
+        .insert_header(("Authorization", format!("Bearer {admin_bearer}")))
+        .to_request();
+    assert_eq!(
+        actix_test::call_service(&app, request).await.status(),
+        StatusCode::OK,
+        "admin reset-password"
+    );
+
+    // The pre-reset token must be dead immediately, not just after logout.
+    let request = actix_test::TestRequest::get()
+        .uri("/api/v1/user/me")
+        .insert_header(("Authorization", format!("Bearer {victim_bearer}")))
+        .to_request();
+    assert_eq!(
+        actix_test::call_service(&app, request).await.status(),
+        StatusCode::UNAUTHORIZED,
+        "pre-reset token after admin password reset"
+    );
+}
+
+#[actix_web::test]
+async fn disabling_and_deleting_users_leaves_no_active_sessions() {
+    use diesel::{QueryableByName, RunQueryDsl};
+    use diesel::sql_types::{BigInt, Nullable, Text};
+
+    #[derive(QueryableByName)]
+    struct SessionRow {
+        #[diesel(sql_type = Nullable<Text>)]
+        revoked_at: Option<String>,
+    }
+
+    fn live_sessions(pool: &DBPool, user_id: i32) -> i64 {
+        #[derive(QueryableByName)]
+        struct Count {
+            #[diesel(sql_type = BigInt)]
+            count: i64,
+        }
+        let mut conn = pool.get().unwrap();
+        let rows: Vec<Count> = diesel::sql_query(
+            "SELECT COUNT(*) AS count FROM sessions WHERE user_id = ?1 AND revoked_at IS NULL",
+        )
+        .bind::<BigInt, _>(i64::from(user_id))
+        .load(&mut conn)
+        .unwrap();
+        rows[0].count
+    }
+
+    let (_file, pool) = database(true);
+    pool.get()
+        .unwrap()
+        .batch_execute(
+            "INSERT INTO rp_users (
+            username, password, salt, authority, error_count, status,
+            created_at, updated_at, password_algo, must_change_password, token_version
+        ) VALUES (
+            'admin3', 'test-password-hash', 'test-salt', 'admin', 0, 0,
+            '2026-10-10 00:00:00', '2026-10-10 00:00:00', 'sha1', 0, 0
+        );
+        INSERT OR IGNORE INTO user_roles (user_id, role_id)
+        SELECT id, 1 FROM rp_users WHERE username = 'admin3';",
+        )
+        .unwrap();
+    let admin_bearer = token_for(&pool, 2, 0, 3600);
+    // Victim session that would otherwise outlive the account.
+    let _victim_bearer = token_for(&pool, 1, 0, 3600);
+    assert_eq!(live_sessions(&pool, 1), 1);
+    let app = actix_test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool.clone()))
+            .service(api::route::v1()),
+    )
+    .await;
+
+    // Disable via update_user: session rows must be revoked in the same call.
+    let request = actix_test::TestRequest::put()
+        .uri("/api/v1/admin/users/1")
+        .insert_header(("Authorization", format!("Bearer {admin_bearer}")))
+        .set_json(serde_json::json!({"status": -1}))
+        .to_request();
+    assert_eq!(
+        actix_test::call_service(&app, request).await.status(),
+        StatusCode::OK,
+        "admin disable user"
+    );
+    assert_eq!(
+        live_sessions(&pool, 1),
+        0,
+        "disabling a user must revoke their sessions"
+    );
+
+    // Re-enable, mint a fresh session, then delete: same invariant.
+    pool.get()
+        .unwrap()
+        .batch_execute("UPDATE rp_users SET status = 0 WHERE id = 1;")
+        .unwrap();
+    let _victim_bearer = token_for(&pool, 1, 0, 3600);
+    assert_eq!(live_sessions(&pool, 1), 1);
+    let request = actix_test::TestRequest::delete()
+        .uri("/api/v1/admin/users/1")
+        .insert_header(("Authorization", format!("Bearer {admin_bearer}")))
+        .to_request();
+    assert_eq!(
+        actix_test::call_service(&app, request).await.status(),
+        StatusCode::OK,
+        "admin delete user"
+    );
+    assert_eq!(
+        live_sessions(&pool, 1),
+        0,
+        "deleting a user must revoke their sessions"
+    );
+    let _ = SessionRow { revoked_at: None };
+}
