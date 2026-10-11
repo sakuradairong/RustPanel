@@ -18,6 +18,10 @@ jobs:
     - uses: dtolnay/rust-toolchain@1.88.0
     - name: Build
       run: cargo build --locked --verbose
+    - name: Prepare test configuration
+      run: |
+        cp config/conf.yaml.example config/conf.yaml
+        cp config/log4rs.yaml.example config/log4rs.yaml
     - name: Run tests
       run: cargo test --locked --verbose
 

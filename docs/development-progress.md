@@ -194,3 +194,9 @@ RP-01~RP-13 十一个 PR（#4~#14）按堆叠链逐个评审后合入 `dev`。�
 ## 2026-10-11 文档重构记录
 
 将 `docs/development-plan.md` 重构为 v0.3：原 v0.2 全文（约 1120 行）原样保留于 [development-plan-v0.2.md](development-plan-v0.2.md)，仅在顶部加历史定位，RP-01..RP-43 编号与原始需求保留；新版按 CP0–CP3 重排并把旧计划作为历史证据引用，范围调整与验收条件在当前切片中追踪。新增 [rust-panel-advantages.md](rust-panel-advantages.md) 研究稿，README 增加研究链接并区分现状与规划。本轮为纯文档改动，**未新增运行验收、未启动面板**；运行结论仍以前文批次与 [整改记录](review-remediation.md) 为准。补齐 RAII 析构/子进程管理和无 GC 的资源边界，收紧任务恢复、备份一致性、离线维护与跨产品测量契约；README 改为当前交付路线，避免把历史愿景误读为已实现能力。
+
+## 2026-10-11 CI 配置准备修复
+
+最新 PR #29、#30 的检查通过；失败的是 `dev` 推送运行 [38099427556](https://github.com/sakuradairong/RustPanel/actions/runs/38099427556)（`46b6281`）和 [38101025056](https://github.com/sakuradairong/RustPanel/actions/runs/38101025056)（`30ad06e`）。二者构建与供应链检查均成功，`bootstrap_csrf` 的两个测试失败：登录/登出 Cookie 路径读取被忽略的 `config/conf.yaml`，干净检出中缺少此文件，首次初始化 panic 后另一个测试报 `Once panicked`。本地已有配置掩盖了依赖，文档提交只再次触发同一失败。
+
+在临时空目录运行同一测试程序，无配置时复现退出 101；复制已提交的配置样例后，5 项 Cookie/CSRF 测试全部通过。CI 新增 `Prepare test configuration`，在测试前从 `config/conf.yaml.example`、`config/log4rs.yaml.example` 生成运行配置，不引入部署凭据。按该 workflow 步骤在全新临时目录准备配置，再执行 `cargo test --locked --offline --no-run` 生成的所有测试程序，**117 项测试通过**。整套最终在沙箱外验证，因为沙箱不支持所有者回归所需的 UID/GID；首次沙箱内该项失败不作为通过证据。
