@@ -30,10 +30,12 @@ pub struct AuthUser {
     pub created_at: chrono::NaiveDateTime,
     pub jti: String,
     pub must_change_password: bool,
+    pub token_version: i32,
+    pub expires_at_unix: i64,
 }
 
-impl From<(SlimUser, String, bool)> for AuthUser {
-    fn from((user, jti, must_change_password): (SlimUser, String, bool)) -> Self {
+impl From<(SlimUser, String, bool, i32, i64)> for AuthUser {
+    fn from((user, jti, must_change_password, token_version, expires_at_unix): (SlimUser, String, bool, i32, i64)) -> Self {
         Self {
             id: user.id,
             username: user.username,
@@ -41,6 +43,8 @@ impl From<(SlimUser, String, bool)> for AuthUser {
             created_at: user.created_at,
             jti,
             must_change_password,
+            token_version,
+            expires_at_unix,
         }
     }
 }
@@ -81,7 +85,7 @@ pub(crate) fn authenticate_token(token: &str, pool: &DBPool) -> Result<AuthUser,
         return Err(CommonError::Unauthorized("Invalid credentials".into()));
     }
     let must_change = user.must_change_password != 0;
-    Ok(AuthUser::from((user.into(), claims.jti, must_change)))
+    Ok(AuthUser::from((user.into(), claims.jti, must_change, claims.ver, claims.exp as i64)))
 }
 
 fn path_allows_must_change(path: &str) -> bool {

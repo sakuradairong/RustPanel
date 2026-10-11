@@ -1,10 +1,9 @@
 //! Listen-address / TLS bootstrap policy (RP-10 / C.8).
 //!
 //! Plaintext HTTP on a non-loopback address is refused unless the operator
-//! explicitly opts in with `RP_ALLOW_INSECURE_PUBLIC_BIND=1`. When
-//! `RP_TLS_CERT` and `RP_TLS_KEY` are both set, public binds are allowed
-//! (TLS expected at the process or an upstream that terminates TLS and
-//! sets `RP_COOKIE_SECURE=1`).
+//! explicitly opts in with `RP_ALLOW_INSECURE_PUBLIC_BIND=1`. The listener
+//! serves HTTP: certificate environment variables do not enable TLS.
+//! Use a loopback listener behind an HTTPS proxy and set `RP_COOKIE_SECURE=1`.
 
 use std::net::IpAddr;
 
@@ -19,7 +18,7 @@ impl std::fmt::Display for BindPolicyError {
             Self::InsecurePublicBind { host } => write!(
                 f,
                 "Refusing plaintext HTTP bind on non-loopback address `{host}`. \
-                 Bind to 127.0.0.1, configure TLS (`RP_TLS_CERT`/`RP_TLS_KEY`), \
+                 Bind to 127.0.0.1 behind an HTTPS proxy, \
                  or set RP_ALLOW_INSECURE_PUBLIC_BIND=1 for an explicit insecure override."
             ),
         }
@@ -38,12 +37,6 @@ fn env_truthy(name: &str) -> bool {
     )
 }
 
-pub fn tls_files_configured() -> bool {
-    let cert = std::env::var("RP_TLS_CERT").unwrap_or_default();
-    let key = std::env::var("RP_TLS_KEY").unwrap_or_default();
-    !cert.trim().is_empty() && !key.trim().is_empty()
-}
-
 pub fn allow_insecure_public_bind() -> bool {
     env_truthy("RP_ALLOW_INSECURE_PUBLIC_BIND")
 }
@@ -59,7 +52,7 @@ pub fn is_loopback_host(host: &str) -> bool {
     }
 }
 
-/// Cookie Secure flag: on when TLS files are configured, cookie env forces it,
+/// Cookie Secure flag: on when cookie env forces it,
 /// or when binding publicly (defense in depth even behind a TLS proxy).
 pub fn cookie_secure_recommended(bind_host: &str) -> bool {
     if env_truthy("RP_COOKIE_SECURE") {
@@ -71,14 +64,14 @@ pub fn cookie_secure_recommended(bind_host: &str) -> bool {
     {
         return false;
     }
-    tls_files_configured() || !is_loopback_host(bind_host)
+    !is_loopback_host(bind_host)
 }
 
 pub fn validate_bind_host(host: &str) -> Result<(), BindPolicyError> {
     if is_loopback_host(host) {
         return Ok(());
     }
-    if tls_files_configured() || allow_insecure_public_bind() {
+    if allow_insecure_public_bind() {
         return Ok(());
     }
     Err(BindPolicyError::InsecurePublicBind {
@@ -121,7 +114,7 @@ mod tests {
     }
 
     #[test]
-    fn public_bind_allowed_with_override_or_tls_env() {
+    fn certificate_paths_do_not_enable_tls_but_explicit_override_allows_http() {
         let _g = ENV_LOCK.lock().unwrap();
         std::env::remove_var("RP_TLS_CERT");
         std::env::remove_var("RP_TLS_KEY");
@@ -130,7 +123,7 @@ mod tests {
         std::env::remove_var("RP_ALLOW_INSECURE_PUBLIC_BIND");
         std::env::set_var("RP_TLS_CERT", "/tmp/cert.pem");
         std::env::set_var("RP_TLS_KEY", "/tmp/key.pem");
-        assert!(validate_bind_host("0.0.0.0").is_ok());
+        assert!(validate_bind_host("0.0.0.0").is_err());
         std::env::remove_var("RP_TLS_CERT");
         std::env::remove_var("RP_TLS_KEY");
     }

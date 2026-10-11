@@ -72,13 +72,36 @@ pub fn require_perm(pool: &DBPool, user: &AuthUser, permission: &str) -> Result<
     }
 }
 
+pub fn capabilities(
+    conn: &mut SqliteConnection,
+    user_id: i32,
+) -> Result<(Vec<String>, Vec<String>), CommonError> {
+    #[derive(QueryableByName)]
+    struct Code {
+        #[diesel(sql_type = Text)]
+        code: String,
+    }
+    let roles: Vec<Code> = sql_query("SELECT r.code FROM roles r JOIN user_roles ur ON ur.role_id = r.id WHERE ur.user_id = ?1 ORDER BY r.code")
+        .bind::<BigInt, _>(i64::from(user_id)).load(conn)?;
+    let permissions: Vec<Code> = sql_query("SELECT DISTINCT p.code FROM permissions p JOIN role_permissions rp ON rp.permission_id = p.id JOIN user_roles ur ON ur.role_id = rp.role_id WHERE ur.user_id = ?1 ORDER BY p.code")
+        .bind::<BigInt, _>(i64::from(user_id)).load(conn)?;
+    Ok((
+        roles.into_iter().map(|r| r.code).collect(),
+        permissions.into_iter().map(|p| p.code).collect(),
+    ))
+}
+
 /// Assign the built-in role that matches legacy authority strings.
 pub fn assign_role_for_authority(
     conn: &mut SqliteConnection,
     user_id: i32,
     authority: &str,
 ) -> Result<(), String> {
-    let role_code = if authority == "admin" { "admin" } else { "viewer" };
+    let role_code = match authority {
+        "admin" => "admin",
+        "operator" => "operator",
+        _ => "viewer",
+    };
     sql_query("DELETE FROM user_roles WHERE user_id = ?1")
         .bind::<BigInt, _>(i64::from(user_id))
         .execute(conn)

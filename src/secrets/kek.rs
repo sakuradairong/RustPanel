@@ -62,12 +62,40 @@ impl MasterKey {
 }
 
 fn read_key_file(path: &Path) -> Result<String, String> {
-    let raw = fs::read(path).map_err(|_| {
+    use std::io::Read;
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    let file = options.open(path).map_err(|_| {
         format!(
             "Failed to read master key file {}; check path and permissions (0600)",
             path.display()
         )
     })?;
+    let metadata = file
+        .metadata()
+        .map_err(|_| "Cannot inspect master key file".to_owned())?;
+    if !metadata.is_file() {
+        return Err("Master key must be a regular file".into());
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if metadata.mode() & 0o7777 != 0o600 || metadata.uid() != unsafe { libc::geteuid() } {
+            return Err("Master key file must be owned by the process user with mode 0600".into());
+        }
+    }
+    let mut raw = Vec::new();
+    file.take(129)
+        .read_to_end(&mut raw)
+        .map_err(|_| "Cannot read master key file".to_owned())?;
+    if raw.len() > 128 {
+        return Err("Master key file is too large".into());
+    }
     // Prefer hex text; also accept raw 32-byte files.
     if raw.len() == MASTER_KEY_BYTES && !looks_like_hex_text(&raw) {
         return Ok(hex_encode(&raw));
@@ -173,6 +201,23 @@ mod tests {
         raw_file.write_all(&raw).unwrap();
         let material = read_key_file(raw_file.path()).unwrap();
         assert_eq!(decode_key_material(&material).unwrap(), raw);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_public_key_permissions_symlinks_and_nonregular_files() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        let file = NamedTempFile::new().unwrap();
+        fs::write(file.path(), SAMPLE).unwrap();
+        fs::set_permissions(file.path(), fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(read_key_file(file.path()).is_err());
+        fs::set_permissions(file.path(), fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(read_key_file(file.path()).is_ok());
+        let dir = tempfile::tempdir().unwrap();
+        let link = dir.path().join("key");
+        symlink(file.path(), &link).unwrap();
+        assert!(read_key_file(&link).is_err());
+        assert!(read_key_file(dir.path()).is_err());
     }
 
     #[test]

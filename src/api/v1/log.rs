@@ -39,7 +39,67 @@ fn log_roots() -> Vec<PathBuf> {
 }
 
 /// Hard cap on buffered log lines so a huge log file cannot exhaust memory.
-const MAX_LOG_LINES: usize = 200_000;
+const MAX_LOG_LINES: usize = 10_000;
+const MAX_LOG_LINE_BYTES: usize = 64 * 1024;
+const MAX_LOG_TAIL_BYTES: usize = 4 * 1024 * 1024;
+
+async fn bounded_tail<R: tokio::io::AsyncBufRead + Unpin>(
+    mut reader: R,
+    max_lines: usize,
+    keyword: Option<&str>,
+) -> std::io::Result<(Vec<String>, usize, bool)> {
+    let mut tail = std::collections::VecDeque::new();
+    let mut line = Vec::new();
+    let mut total = 0;
+    let mut bytes = 0;
+    let mut truncated = false;
+    let limit = max_lines.min(MAX_LOG_LINES);
+    loop {
+        let buffer = reader.fill_buf().await?;
+        let eof = buffer.is_empty();
+        let end = buffer.iter().position(|b| *b == b'\n').map(|i| i + 1);
+        let length = end.unwrap_or(buffer.len());
+        if line.len() + length > MAX_LOG_LINE_BYTES {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Log line exceeds 64 KiB",
+            ));
+        }
+        line.extend_from_slice(&buffer[..length]);
+        reader.consume(length);
+        if end.is_some() || (eof && !line.is_empty()) {
+            if line.last() == Some(&b'\n') {
+                line.pop();
+            }
+            if line.last() == Some(&b'\r') {
+                line.pop();
+            }
+            let text = String::from_utf8_lossy(&line).into_owned();
+            if keyword.map(|kw| text.contains(kw)).unwrap_or(true) {
+                total += 1;
+                if limit > 0 {
+                    bytes += text.len();
+                    tail.push_back(text);
+                    while tail.len() > limit || bytes > MAX_LOG_TAIL_BYTES {
+                        if bytes > MAX_LOG_TAIL_BYTES {
+                            truncated = true;
+                        }
+                        bytes -= tail.pop_front().unwrap().len();
+                    }
+                }
+            }
+            line.clear();
+        }
+        if eof {
+            break;
+        }
+    }
+    Ok((
+        tail.into_iter().collect(),
+        total,
+        truncated || max_lines > MAX_LOG_LINES,
+    ))
+}
 
 #[derive(Deserialize)]
 pub struct ReadLogQuery {
@@ -137,7 +197,11 @@ pub async fn list_logs(user: AuthUser, pool: web::Data<DBPool>) -> HttpResponse 
     })
 }
 
-pub async fn read_log(user: AuthUser, pool: web::Data<DBPool>, query: web::Query<ReadLogQuery>) -> HttpResponse {
+pub async fn read_log(
+    user: AuthUser,
+    pool: web::Data<DBPool>,
+    query: web::Query<ReadLogQuery>,
+) -> HttpResponse {
     if let Err(err) = rbac::require_perm(pool.get_ref(), &user, PERM_LOG_READ) {
         return err.error_response();
     }
@@ -180,39 +244,11 @@ pub async fn read_log(user: AuthUser, pool: web::Data<DBPool>, query: web::Query
     let keyword = query.keyword.as_deref();
 
     let file = fs::File::from_std(std_file);
-    let reader = BufReader::new(file);
-    let mut lines = reader.lines();
-    let mut all_lines = Vec::new();
-
-    loop {
-        match lines.next_line().await {
-            Ok(Some(line)) => {
-                all_lines.push(line);
-                if all_lines.len() >= MAX_LOG_LINES {
-                    break;
-                }
-            }
-            Ok(None) => break,
-            Err(_) => break,
-        }
-    }
-
-    // Filter by keyword if provided — applied before tail slicing
-    // so total reflects the full filtered set (capped at MAX_LOG_LINES).
-    let filtered: Vec<String> = if let Some(kw) = keyword {
-        all_lines.into_iter().filter(|l| l.contains(kw)).collect()
-    } else {
-        all_lines
-    };
-
-    let total = filtered.len();
-
-    // Take last N lines
-    let lines_result: Vec<String> = if filtered.len() > max_lines {
-        filtered[filtered.len() - max_lines..].to_vec()
-    } else {
-        filtered
-    };
+    let (lines_result, total, truncated) =
+        match bounded_tail(BufReader::new(file), max_lines, keyword).await {
+            Ok(tail) => tail,
+            Err(err) => return ResponseStructureError::bad(&format!("Cannot read log: {err}")),
+        };
 
     HttpResponse::Ok().json(ResponseStructure {
         success: true,
@@ -222,6 +258,42 @@ pub async fn read_log(user: AuthUser, pool: web::Data<DBPool>, query: web::Query
             "path": query.path,
             "lines": lines_result,
             "total": total,
+            "truncated": truncated,
         })),
     })
+}
+
+#[cfg(test)]
+mod tail_tests {
+    use super::*;
+    #[tokio::test]
+    async fn reads_actual_eof_and_filters_before_tailing() {
+        let mut data = "old\n".repeat(200_001);
+        data.push_str("match first\nignored\nmatch final\n");
+        let (lines, total, _) = bounded_tail(BufReader::new(data.as_bytes()), 1, Some("match"))
+            .await
+            .unwrap();
+        assert_eq!(lines, vec!["match final"]);
+        assert_eq!(total, 2);
+        let (lines, total, _) = bounded_tail(BufReader::new(data.as_bytes()), 1, None)
+            .await
+            .unwrap();
+        assert_eq!(lines, vec!["match final"]);
+        assert_eq!(total, 200_004);
+    }
+
+    #[tokio::test]
+    async fn oversized_lines_are_rejected_and_tail_memory_is_bounded() {
+        let data = vec![b'x'; MAX_LOG_LINE_BYTES + 1];
+        assert!(bounded_tail(BufReader::new(data.as_slice()), 10, None)
+            .await
+            .is_err());
+        let data = format!("{}\n", "x".repeat(60_000)).repeat(100);
+        let (lines, total, truncated) = bounded_tail(BufReader::new(data.as_bytes()), 100, None)
+            .await
+            .unwrap();
+        assert_eq!(total, 100);
+        assert!(truncated);
+        assert!(lines.iter().map(String::len).sum::<usize>() <= MAX_LOG_TAIL_BYTES);
+    }
 }

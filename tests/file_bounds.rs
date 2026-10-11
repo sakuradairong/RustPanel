@@ -138,6 +138,8 @@ async fn in_root_list_and_atomic_write_succeed() {
     let roots = FileRootConfig::from_roots(vec![root_dir.path().to_path_buf()]);
     let target = root_dir.path().join("hello.txt");
     fs::write(&target, b"hello").unwrap();
+    fs::create_dir(root_dir.path().join("folder")).unwrap();
+    symlink("/etc/passwd", root_dir.path().join("link")).unwrap();
 
     let (_file, pool, bearer) = pool_with_admin();
     let app = actix_test::init_service(
@@ -148,6 +150,11 @@ async fn in_root_list_and_atomic_write_succeed() {
     )
     .await;
 
+    let response = actix_test::call_service(&app, actix_test::TestRequest::get().uri("/api/v1/file/roots")
+        .insert_header(("Authorization", format!("Bearer {bearer}"))).to_request()).await;
+    let body: serde_json::Value = actix_test::read_body_json(response).await;
+    assert!(body["data"]["available"].as_array().unwrap().iter().any(|r| r.as_str() == root_dir.path().to_str()));
+
     let list_uri = format!(
         "/api/v1/file/list?path={}&current=1&pageSize=10",
         root_dir.path().display()
@@ -156,16 +163,56 @@ async fn in_root_list_and_atomic_write_succeed() {
         .uri(&list_uri)
         .insert_header(("Authorization", format!("Bearer {bearer}")))
         .to_request();
-    assert_eq!(
-        actix_test::call_service(&app, list).await.status(),
-        StatusCode::OK
-    );
+    let response = actix_test::call_service(&app, list).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: serde_json::Value = actix_test::read_body_json(response).await;
+    let files = body["data"]["files"].as_array().unwrap();
+    assert!(files.iter().any(|f| f["name"] == "hello.txt" && f["size"] == 5));
+    assert!(files.iter().any(|f| f["name"] == "link" && f["size"].is_null()));
+    assert!(body["data"]["dirs"].as_array().unwrap().iter().any(|d| d["name"] == "folder"));
 
     let save_path = root_dir.path().join("written.txt");
     let bound =
         path_bounds::resolve_for_write_under(save_path.to_str().unwrap(), &roots.roots).unwrap();
     path_bounds::atomic_write(&bound, b"panel").unwrap();
     assert_eq!(fs::read(&save_path).unwrap(), b"panel");
+}
+
+#[test]
+fn atomic_write_preserves_existing_mode_and_owner() {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    let root = tempdir().unwrap();
+    let roots = vec![root.path().to_path_buf()];
+    let path = root.path().join("data");
+    let bound = path_bounds::resolve_for_write_under(path.to_str().unwrap(), &roots).unwrap();
+    path_bounds::atomic_write(&bound, b"new").unwrap();
+    assert_eq!(fs::metadata(&path).unwrap().mode() & 0o7777, 0o600);
+    for mode in [0o644, 0o755] {
+        fs::set_permissions(&path, fs::Permissions::from_mode(mode)).unwrap();
+        let before = fs::metadata(&path).unwrap();
+        path_bounds::atomic_write(&bound, b"replacement").unwrap();
+        let after = fs::metadata(&path).unwrap();
+        assert_eq!((after.uid(), after.gid(), after.mode()), (before.uid(), before.gid(), before.mode()));
+        assert_eq!(fs::read(&path).unwrap(), b"replacement");
+    }
+    if unsafe { libc::geteuid() } == 0 {
+        use std::{ffi::CString, os::unix::ffi::OsStrExt};
+        let name = CString::new(path.as_os_str().as_bytes()).unwrap();
+        if unsafe { libc::chown(name.as_ptr(), 12345, 23456) } == 0 {
+            path_bounds::atomic_write(&bound, b"owned replacement").unwrap();
+            let after = fs::metadata(&path).unwrap();
+            assert_eq!((after.uid(), after.gid()), (12345, 23456));
+        } else {
+            // Containers can expose uid 0 without CAP_CHOWN.
+            assert_eq!(std::io::Error::last_os_error().kind(), std::io::ErrorKind::PermissionDenied);
+        }
+    }
+    let outside = root.path().join("outside");
+    fs::write(&outside, b"untouched").unwrap();
+    fs::remove_file(&path).unwrap();
+    symlink(&outside, &path).unwrap();
+    assert!(path_bounds::atomic_write(&bound, b"escape").is_err());
+    assert_eq!(fs::read(&outside).unwrap(), b"untouched");
 }
 
 /// Deterministic replay of the post-resolve TOCTOU: the path is validated,

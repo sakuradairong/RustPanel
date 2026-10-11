@@ -66,6 +66,26 @@ fn pool_with_role(role_sql: &str) -> (NamedTempFile, DBPool, String) {
 }
 
 #[actix_web::test]
+async fn identity_and_menus_reflect_current_database_capabilities() {
+    let (_file, pool, bearer) = pool_with_viewer();
+    let app = actix_test::init_service(App::new().app_data(web::Data::new(pool.clone())).service(api::route::v1())).await;
+    let response = actix_test::call_service(&app, actix_test::TestRequest::get().uri("/api/v1/user/me")
+        .insert_header(("Authorization", format!("Bearer {bearer}"))).to_request()).await;
+    let body: serde_json::Value = actix_test::read_body_json(response).await;
+    assert_eq!(body["roles"], serde_json::json!(["viewer"]));
+    assert!(body["permissions"].as_array().unwrap().iter().any(|p| p == "file:read"));
+    assert!(!body["permissions"].as_array().unwrap().iter().any(|p| p == "docker:write"));
+    pool.get().unwrap().batch_execute("DELETE FROM user_roles; INSERT INTO user_roles VALUES (1, 2)").unwrap();
+    let response = actix_test::call_service(&app, actix_test::TestRequest::get().uri("/api/v1/user/menus")
+        .insert_header(("Authorization", format!("Bearer {bearer}"))).to_request()).await;
+    let body: serde_json::Value = actix_test::read_body_json(response).await;
+    assert_eq!(body["data"]["info"]["username"], "viewer");
+    assert_eq!(body["data"]["roles"], serde_json::json!(["operator"]));
+    assert!(body["data"]["access"].as_array().unwrap().iter().any(|p| p == "docker:write"));
+    assert!(!body["data"]["menus"].as_array().unwrap().iter().any(|m| m["path"] == "/admin/users"));
+}
+
+#[actix_web::test]
 async fn viewer_is_forbidden_from_installer_site_firewall_and_file_writes() {
     let (_file, pool, bearer) = pool_with_viewer();
     let app = actix_test::init_service(
@@ -296,4 +316,3 @@ async fn operator_passes_rbac_on_certificate_mutations() {
         );
     }
 }
-

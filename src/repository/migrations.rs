@@ -12,7 +12,7 @@ use std::path::Path;
 use crate::service::db::DBPool;
 
 /// Product binary expects this schema version after a successful migrate.
-pub const EXPECTED_SCHEMA_VERSION: i64 = 7;
+pub const EXPECTED_SCHEMA_VERSION: i64 = 8;
 
 /// Bookkeeping table for applied migrations. Created outside numbered SQL so the
 /// runner can always inspect history even on a blank database.
@@ -92,18 +92,17 @@ const MIGRATIONS: &[Migration] = &[
         name: "007_secrets",
         sql: include_str!("sql/007_secrets.sql"),
     },
+    Migration {
+        version: 8,
+        name: "008_sse_sessions",
+        sql: include_str!("sql/008_sse_sessions.sql"),
+    },
 ];
 
 #[derive(QueryableByName)]
 struct VersionRow {
     #[diesel(sql_type = BigInt)]
     version: i64,
-}
-
-#[derive(QueryableByName)]
-struct ChecksumRow {
-    #[diesel(sql_type = Text)]
-    checksum: String,
 }
 
 #[derive(QueryableByName)]
@@ -156,6 +155,34 @@ fn applied_versions(conn: &mut SqliteConnection) -> Result<Vec<(i64, String)>, M
         .collect())
 }
 
+fn validate_history(applied: &[(i64, String)], complete: bool) -> Result<i64, MigrationError> {
+    if applied.len() > MIGRATIONS.len() {
+        return Err(MigrationError::new(
+            "Database contains migrations newer than this binary",
+        ));
+    }
+    for (index, (version, recorded)) in applied.iter().enumerate() {
+        let expected = &MIGRATIONS[index];
+        if *version != expected.version {
+            return Err(MigrationError::new(format!(
+                "Unknown migration or history gap at version {version}"
+            )));
+        }
+        if recorded != &checksum(expected.sql) {
+            return Err(MigrationError::new(format!(
+                "Migration {version} checksum mismatch"
+            )));
+        }
+    }
+    let current = applied.last().map(|row| row.0).unwrap_or(0);
+    if complete && current != EXPECTED_SCHEMA_VERSION {
+        return Err(MigrationError::new(
+            "Verified database missing expected schema version",
+        ));
+    }
+    Ok(current)
+}
+
 fn record_migration(
     conn: &mut SqliteConnection,
     migration: &Migration,
@@ -187,6 +214,32 @@ fn adopt_legacy_baseline(conn: &mut SqliteConnection) -> Result<(), MigrationErr
     if !table_exists(conn, "rp_users")? {
         return Ok(());
     }
+    #[derive(QueryableByName)]
+    struct Column {
+        #[diesel(sql_type = Text)]
+        name: String,
+    }
+    let columns: Vec<Column> = sql_query("SELECT name FROM pragma_table_info('rp_users')")
+        .load(conn)
+        .map_err(|e| MigrationError::new(format!("Cannot inspect legacy schema: {e}")))?;
+    for required in [
+        "id",
+        "username",
+        "password",
+        "salt",
+        "initial_password",
+        "authority",
+        "error_count",
+        "status",
+        "created_at",
+        "updated_at",
+    ] {
+        if !columns.iter().any(|column| column.name == required) {
+            return Err(MigrationError::new(format!(
+                "Unsupported legacy schema: missing rp_users.{required}"
+            )));
+        }
+    }
     let baseline = &MIGRATIONS[0];
     let digest = checksum(baseline.sql);
     record_migration(conn, baseline, &digest)?;
@@ -200,7 +253,7 @@ fn apply_pending(conn: &mut SqliteConnection) -> Result<i64, MigrationError> {
     adopt_legacy_baseline(conn)?;
 
     let applied = applied_versions(conn)?;
-    let mut current = applied.last().map(|(version, _)| *version).unwrap_or(0);
+    let mut current = validate_history(&applied, false)?;
 
     for migration in MIGRATIONS {
         let digest = checksum(migration.sql);
@@ -307,8 +360,9 @@ fn encode_sqlite_uri_path(path: &Path) -> String {
 pub fn verify_database_file(path: &Path) -> Result<i64, MigrationError> {
     use diesel::Connection;
     let uri = format!("file:{}?mode=ro", encode_sqlite_uri_path(path));
-    let mut conn = SqliteConnection::establish(&uri)
-        .map_err(|err| MigrationError::new(format!("Failed to open database for verification: {err}")))?;
+    let mut conn = SqliteConnection::establish(&uri).map_err(|err| {
+        MigrationError::new(format!("Failed to open database for verification: {err}"))
+    })?;
 
     #[derive(QueryableByName)]
     struct IntegrityRow {
@@ -337,28 +391,7 @@ pub fn verify_database_file(path: &Path) -> Result<i64, MigrationError> {
             "Verified database is missing schema_migrations",
         ));
     }
-    let expected_migration = MIGRATIONS
-        .iter()
-        .find(|migration| migration.version == EXPECTED_SCHEMA_VERSION)
-        .ok_or_else(|| {
-            MigrationError::new("Binary is missing the expected schema migration definition")
-        })?;
-    let rows: Vec<ChecksumRow> = sql_query(
-        "SELECT checksum FROM schema_migrations WHERE version = ?1 LIMIT 1",
-    )
-    .bind::<BigInt, _>(EXPECTED_SCHEMA_VERSION)
-    .load(&mut conn)
-    .map_err(|err| MigrationError::new(format!("Failed to read migration checksum: {err}")))?;
-    let expected = checksum(expected_migration.sql);
-    let recorded = rows
-        .first()
-        .ok_or_else(|| MigrationError::new("Verified database missing expected schema version"))?;
-    if recorded.checksum != expected {
-        return Err(MigrationError::new(
-            "Verified database migration checksum does not match this binary",
-        ));
-    }
-    Ok(EXPECTED_SCHEMA_VERSION)
+    validate_history(&applied_versions(&mut conn)?, true)
 }
 
 #[cfg(test)]
@@ -443,5 +476,35 @@ mod tests {
             .unwrap();
         let error = migrate(&pool).unwrap_err();
         assert!(error.message().contains("checksum mismatch"));
+        assert!(verify_database_file(file.path()).is_err());
+    }
+
+    #[test]
+    fn unknown_and_missing_history_rows_are_rejected_by_startup_and_backup() {
+        for mutation in [
+            "INSERT INTO schema_migrations VALUES (999, 'future', 'unknown', '2026-10-10')",
+            "DELETE FROM schema_migrations WHERE version = 2",
+        ] {
+            let file = NamedTempFile::new().unwrap();
+            let pool = pool_for(file.path());
+            migrate(&pool).unwrap();
+            pool.get().unwrap().batch_execute(mutation).unwrap();
+            assert!(migrate(&pool).is_err(), "{mutation}");
+            assert!(verify_database_file(file.path()).is_err(), "{mutation}");
+        }
+    }
+
+    #[test]
+    fn incompatible_legacy_table_is_not_stamped_as_a_valid_baseline() {
+        let file = NamedTempFile::new().unwrap();
+        let pool = pool_for(file.path());
+        pool.get()
+            .unwrap()
+            .batch_execute("CREATE TABLE rp_users (id INTEGER PRIMARY KEY, username TEXT)")
+            .unwrap();
+        assert!(migrate(&pool).is_err());
+        assert!(applied_versions(&mut pool.get().unwrap())
+            .unwrap()
+            .is_empty());
     }
 }

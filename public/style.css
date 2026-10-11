@@ -364,3 +364,5 @@ button:focus-visible,.nav-item:focus-visible,.tab:focus-visible{outline-offset:1
 @media(max-width:768px){#sidebar-toggle{display:block}}
 #sidebar-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:99}
 @media(max-width:768px){#sidebar-overlay.show{display:block}}
+
+[hidden]{display:none!important}

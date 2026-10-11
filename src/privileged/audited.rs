@@ -105,8 +105,8 @@ pub async fn execute_audited(
                 Some(result.duration_ms as i64),
             ) {
                 // The action already ran; report loudly instead of dropping
-                // the outcome. The stale-intent reconciliation will mark the
-                // intent aborted if this write truly failed.
+                // the outcome. The stale-intent reconciliation records an
+                // unknown outcome if this write truly failed; do not retry the action.
                 crate::log_error!(
                     target: "audit",
                     "audit completion failed for {}: {}",

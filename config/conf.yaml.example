@@ -1,6 +1,7 @@
 app:
-  # Default to loopback. Public binds require TLS env (RP_TLS_CERT/RP_TLS_KEY)
-  # or explicit RP_ALLOW_INSECURE_PUBLIC_BIND=1.
+  # HTTP listener: use loopback behind an HTTPS reverse proxy.
+  # Public HTTP requires explicit RP_ALLOW_INSECURE_PUBLIC_BIND=1.
+  # Set RP_COOKIE_SECURE=1 when the browser connects through HTTPS.
   host: 127.0.0.1
   port: 8080
   security_dir: dfhg156d1

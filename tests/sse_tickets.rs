@@ -120,3 +120,37 @@ async fn ticket_connects_once_and_rejects_reuse_wrong_stream_and_query_jwt() {
         StatusCode::UNAUTHORIZED
     );
 }
+
+#[actix_web::test]
+async fn logout_invalidates_unused_tickets_and_ends_an_open_stream() {
+    use actix_web::body::MessageBody;
+    let (_file, pool, bearer) = pool_with_user();
+    let app = actix_test::init_service(App::new().app_data(web::Data::new(pool.clone())).service(api::route::v1())).await;
+    let mut tickets = Vec::new();
+    for _ in 0..2 {
+        let response = actix_test::call_service(&app, actix_test::TestRequest::post()
+            .uri("/api/v1/monitor/tickets").insert_header(("Authorization", format!("Bearer {bearer}")))
+            .set_json(serde_json::json!({"stream":"monitor"})).to_request()).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: serde_json::Value = actix_test::read_body_json(response).await;
+        tickets.push(body["data"]["ticket"].as_str().unwrap().to_owned());
+    }
+    let response = actix_test::call_service(&app, actix_test::TestRequest::get()
+        .uri(&format!("/api/v1/monitor?ticket={}", tickets[0])).to_request()).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut body = std::pin::pin!(response.into_body());
+    let first = tokio::time::timeout(Duration::from_secs(5), futures_util::future::poll_fn(|cx| body.as_mut().poll_next(cx))).await.unwrap().unwrap().unwrap();
+    assert!(String::from_utf8_lossy(&first).contains("data:"));
+    let logout = actix_test::call_service(&app, actix_test::TestRequest::post()
+        .uri("/api/v1/login/logout").insert_header(("Authorization", format!("Bearer {bearer}"))).to_request()).await;
+    assert_eq!(logout.status(), StatusCode::OK);
+    let rejected = actix_test::call_service(&app, actix_test::TestRequest::get()
+        .uri(&format!("/api/v1/monitor?ticket={}", tickets[1])).to_request()).await;
+    assert_eq!(rejected.status(), StatusCode::UNAUTHORIZED);
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let chunk = futures_util::future::poll_fn(|cx| body.as_mut().poll_next(cx)).await.unwrap().unwrap();
+            if String::from_utf8_lossy(&chunk).contains("event: revoked") { break; }
+        }
+    }).await.unwrap();
+}

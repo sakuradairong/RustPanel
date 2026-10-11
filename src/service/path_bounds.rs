@@ -221,6 +221,16 @@ pub fn atomic_write(bound: &BoundPath, bytes: &[u8]) -> Result<(), PathBoundErro
     tmp_name.push(suffix);
     let tmp_path = parent.join(&tmp_name);
 
+    let existing = match fs::symlink_metadata(&bound.absolute) {
+        Ok(meta) if meta.is_file() => Some(meta),
+        Ok(_) => {
+            return Err(PathBoundError::Escape(
+                "Write target must be a regular file".into(),
+            ))
+        }
+        Err(e) if e.kind() == io::ErrorKind::NotFound => None,
+        Err(e) => return Err(PathBoundError::Io(e.to_string())),
+    };
     let write_result = (|| -> Result<(), PathBoundError> {
         #[cfg(unix)]
         let mut file = {
@@ -241,6 +251,16 @@ pub fn atomic_write(bound: &BoundPath, bytes: &[u8]) -> Result<(), PathBoundErro
             .map_err(|e| PathBoundError::Io(format!("temp create failed: {e}")))?;
         file.write_all(bytes)
             .map_err(|e| PathBoundError::Io(format!("temp write failed: {e}")))?;
+        if let Some(meta) = existing.as_ref() {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::MetadataExt;
+                preserve_metadata(&file, meta.uid(), meta.gid(), meta.mode())?;
+            }
+            #[cfg(not(unix))]
+            file.set_permissions(meta.permissions())
+                .map_err(|e| PathBoundError::Io(e.to_string()))?;
+        }
         file.sync_all()
             .map_err(|e| PathBoundError::Io(format!("temp sync failed: {e}")))?;
         fs::rename(&tmp_path, &bound.absolute)
@@ -299,8 +319,45 @@ pub fn open_bound_file(bound: &BoundPath) -> Result<fs::File, PathBoundError> {
     }
 }
 
+/// Keep the validated directory alive while entry paths refer to its proc fd.
+pub struct BoundReadDir {
+    entries: fs::ReadDir,
+    #[cfg(unix)]
+    _directory: Option<fs::File>,
+}
+
+impl Iterator for BoundReadDir {
+    type Item = io::Result<fs::DirEntry>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.entries.next()
+    }
+}
+
+#[cfg(unix)]
+fn preserve_metadata(file: &fs::File, uid: u32, gid: u32, mode: u32) -> Result<(), PathBoundError> {
+    use std::os::{
+        fd::AsRawFd,
+        unix::fs::{MetadataExt, PermissionsExt},
+    };
+    let current = file
+        .metadata()
+        .map_err(|e| PathBoundError::Io(e.to_string()))?;
+    if (current.uid() != uid || current.gid() != gid)
+        && unsafe { libc::fchown(file.as_raw_fd(), uid, gid) } != 0
+    {
+        return Err(PathBoundError::Io(format!(
+            "preserve ownership failed: {}",
+            io::Error::last_os_error()
+        )));
+    }
+    // chown can clear permission bits; restore mode afterwards.
+    file.set_permissions(fs::Permissions::from_mode(mode & 0o7777))
+        .map_err(|e| PathBoundError::Io(format!("preserve permissions failed: {e}")))
+}
+
 /// Open a previously bound directory without following a directory symlink.
-pub fn open_bound_dir(bound: &BoundPath) -> Result<fs::ReadDir, PathBoundError> {
+pub fn open_bound_dir(bound: &BoundPath) -> Result<BoundReadDir, PathBoundError> {
     #[cfg(target_os = "linux")]
     {
         if let Ok(relative) = bound.absolute.strip_prefix(&bound.root) {
@@ -310,8 +367,11 @@ pub fn open_bound_dir(bound: &BoundPath) -> Result<fs::ReadDir, PathBoundError> 
                     // /proc/self/fd instead of re-resolving the full path.
                     use std::os::fd::AsRawFd;
                     let proc_path = format!("/proc/self/fd/{}", fd.as_raw_fd());
-                    return fs::read_dir(&proc_path).map_err(|e| {
-                        PathBoundError::Io(format!("open directory failed: {e}"))
+                    let entries = fs::read_dir(&proc_path)
+                        .map_err(|e| PathBoundError::Io(format!("open directory failed: {e}")))?;
+                    return Ok(BoundReadDir {
+                        entries,
+                        _directory: Some(fs::File::from(fd)),
                     });
                 }
                 Err(err) if err.is_escape() => return Err(err),
@@ -335,17 +395,22 @@ pub fn open_bound_dir(bound: &BoundPath) -> Result<fs::ReadDir, PathBoundError> 
         return Err(PathBoundError::Escape("Path is not a directory".into()));
     }
     #[cfg(unix)]
-    {
+    let directory = {
         use std::os::unix::fs::OpenOptionsExt;
         // Confirm open with O_NOFOLLOW|O_DIRECTORY before read_dir.
-        let _dir = fs::OpenOptions::new()
+        let directory = fs::OpenOptions::new()
             .read(true)
             .custom_flags(libc::O_NOFOLLOW | libc::O_DIRECTORY)
             .open(&bound.absolute)
             .map_err(|e| map_open_err("open directory failed", e))?;
-        drop(_dir);
-    }
-    fs::read_dir(&bound.absolute).map_err(|e| PathBoundError::Io(e.to_string()))
+        Some(directory)
+    };
+    let entries = fs::read_dir(&bound.absolute).map_err(|e| PathBoundError::Io(e.to_string()))?;
+    Ok(BoundReadDir {
+        entries,
+        #[cfg(unix)]
+        _directory: directory,
+    })
 }
 
 fn map_open_err(prefix: &str, err: io::Error) -> PathBoundError {
@@ -852,6 +917,28 @@ mod linux {
         let tmp_c = os_to_cstring(tmp_name.as_os_str())?;
         let name_c = os_to_cstring(name)?;
 
+        let mut existing: libc::stat = unsafe { std::mem::zeroed() };
+        let existing = if unsafe {
+            libc::fstatat(
+                parent_raw,
+                name_c.as_ptr(),
+                &mut existing,
+                libc::AT_SYMLINK_NOFOLLOW,
+            )
+        } == 0
+        {
+            if existing.st_mode & libc::S_IFMT != libc::S_IFREG {
+                return Err(PathBoundError::Escape(
+                    "Write target must be a regular file".into(),
+                ));
+            }
+            Some(existing)
+        } else if std::io::Error::last_os_error().kind() == std::io::ErrorKind::NotFound {
+            None
+        } else {
+            return Err(map_openat_errno("write target metadata failed"));
+        };
+
         let write_result = (|| -> Result<(), PathBoundError> {
             let fd = unsafe {
                 libc::openat(
@@ -871,12 +958,14 @@ mod linux {
             let mut file = fs::File::from(unsafe { OwnedFd::from_raw_fd(fd) });
             file.write_all(bytes)
                 .map_err(|e| PathBoundError::Io(format!("temp write failed: {e}")))?;
+            if let Some(meta) = existing.as_ref() {
+                super::preserve_metadata(&file, meta.st_uid, meta.st_gid, meta.st_mode)?;
+            }
             file.sync_all()
                 .map_err(|e| PathBoundError::Io(format!("temp sync failed: {e}")))?;
             drop(file);
-            let rc = unsafe {
-                libc::renameat(parent_raw, tmp_c.as_ptr(), parent_raw, name_c.as_ptr())
-            };
+            let rc =
+                unsafe { libc::renameat(parent_raw, tmp_c.as_ptr(), parent_raw, name_c.as_ptr()) };
             if rc != 0 {
                 return Err(map_openat_errno("atomic rename failed"));
             }

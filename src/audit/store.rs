@@ -276,8 +276,8 @@ pub fn mark_outbox_retry(
     Ok(())
 }
 
-/// Mark intents still `pending` after `stale_after_secs` as `aborted`: the
-/// process died between begin and complete, and nothing else will finish them.
+/// Mark stale pending intents as unknown: execution may have completed even
+/// when its outcome could not be persisted. Never infer that nothing ran.
 pub fn reconcile_stale_intents(
     pool: &DBPool,
     stale_after_secs: i64,
@@ -289,7 +289,7 @@ pub fn reconcile_stale_intents(
         .format("%Y-%m-%d %H:%M:%S%.3f")
         .to_string();
     let changed = sql_query(
-        "UPDATE audit_intents SET status = 'aborted'
+        "UPDATE audit_intents SET status = 'unknown'
          WHERE status = 'pending' AND created_at < ?1",
     )
     .bind::<Text, _>(&cutoff)
@@ -474,7 +474,7 @@ mod tests {
     }
 
     #[test]
-    fn stale_pending_intents_are_reconciled_to_aborted() {
+    fn stale_pending_intents_are_reconciled_to_unknown() {
         let (_f, pool) = pool();
         let stale = begin_intent(
             &pool,
@@ -528,7 +528,7 @@ mod tests {
                 .bind::<BigInt, _>(fresh.id)
                 .load(&mut conn)
                 .unwrap();
-        assert_eq!(stale_row[0].status, "aborted");
+        assert_eq!(stale_row[0].status, "unknown");
         assert_eq!(fresh_row[0].status, "pending");
     }
 

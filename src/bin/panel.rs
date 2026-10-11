@@ -50,6 +50,10 @@ async fn main() -> std::io::Result<()> {
     MASTER_KEY.as_ref().map_err(|message| {
         std::io::Error::new(std::io::ErrorKind::InvalidInput, message.clone())
     })?;
+    rust_panel::service::bind_policy::validate_bind_host(&CONF.app.host)
+        .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err.to_string()))?;
+    // Reserve the actual socket before creating any bootstrap account.
+    let listener = std::net::TcpListener::bind((CONF.app.host.as_str(), CONF.app.port))?;
     init();
     let pool: DBPool = r2d2::Pool::builder()
         .max_size(CONF.database.max_pool)
@@ -72,16 +76,6 @@ async fn main() -> std::io::Result<()> {
 
     // Audit outbox delivery + retention purges run until RP-12 provides jobs.
     tokio::spawn(rust_panel::service::maintenance::run_forever(pool.clone()));
-
-    if let Err(err) = rust_panel::service::bind_policy::validate_bind_host(&CONF.app.host) {
-        log_error!("{}", err);
-        std::process::exit(1);
-    }
-
-    if !port_check::is_local_port_free(CONF.app.port) {
-        log_error!("Error: The Port {} is already in use.", CONF.app.port);
-        std::process::exit(1);
-    }
 
     let cookie_secure =
         rust_panel::service::bind_policy::cookie_secure_recommended(&CONF.app.host);
@@ -146,10 +140,10 @@ async fn main() -> std::io::Result<()> {
         // });
 
         if let Some(admin) = bootstrap_admin.as_ref() {
-            // One-time credentials exist only in memory for this boot; never re-read from DB.
+            // Report only the protected delivery path; never log credential contents.
             log_info!("bootstrap username:{}", admin.username);
-            log_info!("bootstrap one-time password:{}", admin.password);
-            log_warn!("Change the bootstrap password on first login; it is not stored in plaintext");
+            log_info!("bootstrap credentials file:{}", admin.credentials_path.display());
+            log_warn!("Change the bootstrap password on first login; remove the protected credential file after changing the password");
         } else {
             match find_user_by_id(1, &pool) {
                 Ok(Some(user)) => {
@@ -198,7 +192,7 @@ async fn main() -> std::io::Result<()> {
             .service(fs::Files::new("/", "./public").index_file("index.html"))          
     })
     .workers(CONF.app.workers)
-    .bind((CONF.app.host.as_str(), CONF.app.port))?
+    .listen(listener)?
     .run()
     .await
 }

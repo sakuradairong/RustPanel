@@ -12,7 +12,7 @@ async function renderFileContent(){
   c.innerHTML=`
   <div class="content-toolbar">
     <span style="flex:1;font-size:0.85rem;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(path)}</span>
-    <button class="btn btn-sm btn-success" id="file-save-btn" disabled>Save</button>
+    <button data-permission="file:write" class="btn btn-sm btn-success" id="file-save-btn" disabled>Save</button>
     <button class="btn btn-sm btn-ghost" id="file-back-btn">Back</button>
   </div>
   <textarea class="content-area" id="file-content-area" spellcheck="false">Loading...</textarea>
@@ -127,16 +127,16 @@ async function renderDockerContainers(dc){
       </div>
       <div class="dk-toolbar-right">
         <span class="text-sm text-muted" id="dc-count"></span>
-        <button class="btn btn-sm btn-success" id="dc-create-btn">+ Create</button>
+        <button data-permission="docker:write" class="btn btn-sm btn-success" id="dc-create-btn">+ Create</button>
         <button class="btn btn-sm btn-ghost" id="dc-refresh">⟳ Refresh</button>
       </div>
     </div>
     <div class="dk-batch" id="dc-batch">
       <span class="dk-batch-label" id="dc-batch-label">0 selected</span>
-      <button class="btn btn-xs btn-success" id="dc-batch-start">Start</button>
-      <button class="btn btn-xs btn-warning" id="dc-batch-stop">Stop</button>
-      <button class="btn btn-xs btn-ghost" id="dc-batch-restart">Restart</button>
-      <button class="btn btn-xs btn-danger" id="dc-batch-remove">Remove</button>
+      <button data-permission="docker:write" class="btn btn-xs btn-success" id="dc-batch-start">Start</button>
+      <button data-permission="docker:write" class="btn btn-xs btn-warning" id="dc-batch-stop">Stop</button>
+      <button data-permission="docker:write" class="btn btn-xs btn-ghost" id="dc-batch-restart">Restart</button>
+      <button data-permission="docker:write" class="btn btn-xs btn-danger" id="dc-batch-remove">Remove</button>
       <button class="btn btn-xs btn-ghost" id="dc-batch-clear">Clear</button>
     </div>
     <div id="dc-body"></div>`;
@@ -266,16 +266,16 @@ async function renderDockerContainers(dc){
             <div class="dk-row"><span class="dk-k">Status</span><span class="dk-v" title="${escapeHtml(ct.status||'')}">${escapeHtml(ct.status||'—')}</span></div>
           </div>
           <div class="dk-actions">
-            <button class="btn btn-xs btn-success dc-act" data-id="${ct.id}" data-act="start" ${run||paused?'disabled':''} title="Start">▶</button>
-            <button class="btn btn-xs btn-warning dc-act" data-id="${ct.id}" data-act="stop" ${!run?'disabled':''} title="Stop">⏹</button>
-            <button class="btn btn-xs btn-ghost dc-act" data-id="${ct.id}" data-act="restart" title="Restart">↻</button>
-            <button class="btn btn-xs btn-ghost dc-act" data-id="${ct.id}" data-act="pause" ${!run?'disabled':''} title="Pause">⏸</button>
-            <button class="btn btn-xs btn-ghost dc-act" data-id="${ct.id}" data-act="unpause" ${!paused?'disabled':''} title="Unpause">⏯</button>
-            <button class="btn btn-xs btn-ghost dc-act" data-id="${ct.id}" data-act="exec" data-name="${escapeHtml(nm)}" ${!run?'disabled':''} title="Exec">$</button>
+            <button data-permission="docker:write" class="btn btn-xs btn-success dc-act" data-id="${ct.id}" data-act="start" ${run||paused?'disabled':''} title="Start">▶</button>
+            <button data-permission="docker:write" class="btn btn-xs btn-warning dc-act" data-id="${ct.id}" data-act="stop" ${!run?'disabled':''} title="Stop">⏹</button>
+            <button data-permission="docker:write" class="btn btn-xs btn-ghost dc-act" data-id="${ct.id}" data-act="restart" title="Restart">↻</button>
+            <button data-permission="docker:write" class="btn btn-xs btn-ghost dc-act" data-id="${ct.id}" data-act="pause" ${!run?'disabled':''} title="Pause">⏸</button>
+            <button data-permission="docker:write" class="btn btn-xs btn-ghost dc-act" data-id="${ct.id}" data-act="unpause" ${!paused?'disabled':''} title="Unpause">⏯</button>
+            <button data-permission="docker:write" class="btn btn-xs btn-ghost dc-act" data-id="${ct.id}" data-act="exec" data-name="${escapeHtml(nm)}" ${!run?'disabled':''} title="Exec">$</button>
             <button class="btn btn-xs btn-ghost dc-act" data-id="${ct.id}" data-act="logs" title="Logs">📋</button>
             <button class="btn btn-xs btn-ghost dc-act" data-id="${ct.id}" data-act="stats" title="Stats">📊</button>
             <button class="btn btn-xs btn-ghost dc-act" data-id="${ct.id}" data-act="inspect" data-name="${escapeHtml(nm)}" title="Details">🔍</button>
-            <button class="btn btn-xs btn-danger dc-act" data-id="${ct.id}" data-act="remove" data-name="${escapeHtml(nm)}" title="Remove">🗑</button>
+            <button data-permission="docker:write" class="btn btn-xs btn-danger dc-act" data-id="${ct.id}" data-act="remove" data-name="${escapeHtml(nm)}" title="Remove">🗑</button>
           </div>
         </div>`;
       });
@@ -361,16 +361,16 @@ async function openDockerDetailDrawer(dc,id,nameHint){
       <div class="drawer-section">
         <h4>Actions</h4>
         <div class="drawer-actions">
-          <button class="btn btn-sm btn-success" id="dr-start" ${run||paused?'disabled':''}>Start</button>
-          <button class="btn btn-sm btn-warning" id="dr-stop" ${!run?'disabled':''}>Stop</button>
-          <button class="btn btn-sm btn-ghost" id="dr-restart">Restart</button>
-          <button class="btn btn-sm btn-ghost" id="dr-pause" ${!run?'disabled':''}>Pause</button>
-          <button class="btn btn-sm btn-ghost" id="dr-unpause" ${!paused?'disabled':''}>Unpause</button>
-          <button class="btn btn-sm btn-ghost" id="dr-exec" ${!run?'disabled':''}>Exec</button>
+          <button data-permission="docker:write" class="btn btn-sm btn-success" id="dr-start" ${run||paused?'disabled':''}>Start</button>
+          <button data-permission="docker:write" class="btn btn-sm btn-warning" id="dr-stop" ${!run?'disabled':''}>Stop</button>
+          <button data-permission="docker:write" class="btn btn-sm btn-ghost" id="dr-restart">Restart</button>
+          <button data-permission="docker:write" class="btn btn-sm btn-ghost" id="dr-pause" ${!run?'disabled':''}>Pause</button>
+          <button data-permission="docker:write" class="btn btn-sm btn-ghost" id="dr-unpause" ${!paused?'disabled':''}>Unpause</button>
+          <button data-permission="docker:write" class="btn btn-sm btn-ghost" id="dr-exec" ${!run?'disabled':''}>Exec</button>
           <button class="btn btn-sm btn-ghost" id="dr-logs">Logs</button>
           <button class="btn btn-sm btn-ghost" id="dr-stats">Stats</button>
           <button class="btn btn-sm btn-ghost" id="dr-raw">Raw JSON</button>
-          <button class="btn btn-sm btn-danger" id="dr-remove">Remove</button>
+          <button data-permission="docker:write" class="btn btn-sm btn-danger" id="dr-remove">Remove</button>
         </div>
       </div>
       <div class="drawer-section" id="dr-raw-box" style="display:none">
@@ -534,7 +534,7 @@ function openDockerExecModal(id,nameHint){
     <div id="dc-exec-err" class="error-msg" style="display:none"></div>
     <div class="btn-row">
       <button class="btn btn-sm btn-ghost" id="dc-exec-close">Close</button>
-      <button class="btn btn-sm btn-success" id="dc-exec-run">Run</button>
+      <button data-permission="docker:write" class="btn btn-sm btn-success" id="dc-exec-run">Run</button>
     </div>`,{maxWidth:'560px'});
   m.root.querySelector('#dc-exec-close').onclick=m.close;
   m.root.querySelector('#dc-exec-copy').onclick=async()=>{
@@ -551,12 +551,12 @@ function openDockerExecModal(id,nameHint){
     err.style.display='none';btn.disabled=true;btn.textContent='Running…';out.textContent='…';
     try{
       const r=await api('/docker/containers/'+encodeURIComponent(id)+'/exec',{method:'POST',body:JSON.stringify({cmd})});
+      out.textContent=(r.data&&r.data.output!=null)?String(r.data.output):'(no output)';
+      if(r.data&&r.data.truncated)out.textContent+='\n[Output truncated at 1 MiB]';
       if(r.success){
-        out.textContent=(r.data&&r.data.output!=null)?String(r.data.output):'(no output)';
-        showToast('Exec finished','success');
+        showToast('Exec finished (exit 0)','success');
       } else {
         err.textContent=r.message||'Exec failed';err.style.display='block';
-        out.textContent='';
       }
     }catch(e){
       if(e.message==='Unauthorized'){m.close();return}
@@ -590,7 +590,7 @@ function renderDockerCreate(dc){
     <div id="dc-err" class="error-msg" style="display:none"></div>
     <div class="btn-row">
       <button class="btn btn-sm btn-ghost" id="dc-c-back">Cancel</button>
-      <button class="btn btn-sm btn-success" id="dc-c-do">Create & Start</button>
+      <button data-permission="docker:write" class="btn btn-sm btn-success" id="dc-c-do">Create & Start</button>
     </div>`,{maxWidth:'480px'});
   m.root.querySelector('#dc-c-back').addEventListener('click',m.close);
   m.root.querySelector('#dc-c-do').addEventListener('click',async function(){
@@ -638,8 +638,8 @@ async function renderDockerImages(dc){
         <span class="text-sm text-muted" id="di-count"></span>
       </div>
       <div class="dk-toolbar-right">
-        <button class="btn btn-sm btn-ghost" id="di-prune" title="Remove dangling images">Prune</button>
-        <button class="btn btn-sm btn-success" id="di-pull">+ Pull</button>
+        <button data-permission="docker:write" class="btn btn-sm btn-ghost" id="di-prune" title="Remove dangling images">Prune</button>
+        <button data-permission="docker:write" class="btn btn-sm btn-success" id="di-pull">+ Pull</button>
       </div>
     </div>
     <div id="di-body"></div>`;
@@ -674,7 +674,7 @@ async function renderDockerImages(dc){
             <div class="dk-row"><span class="dk-k">Size</span><span class="dk-v">${szStr}</span></div>
           </div>
           <div class="dk-actions">
-            <button class="btn btn-xs btn-danger di-rm" data-id="${escapeHtml(img.id||'')}" data-name="${escapeHtml(full)}" title="Remove">🗑 Remove</button>
+            <button data-permission="docker:write" class="btn btn-xs btn-danger di-rm" data-id="${escapeHtml(img.id||'')}" data-name="${escapeHtml(full)}" title="Remove">🗑 Remove</button>
           </div>
         </div>`;
       });
@@ -704,7 +704,7 @@ async function renderDockerImages(dc){
         <div id="di-prune-err" class="error-msg" style="display:none"></div>
         <div class="btn-row">
           <button class="btn btn-sm btn-ghost" id="di-prune-cancel">Cancel</button>
-          <button class="btn btn-sm btn-danger" id="di-prune-go">Prune</button>
+          <button data-permission="docker:write" class="btn btn-sm btn-danger" id="di-prune-go">Prune</button>
         </div>`,{maxWidth:'440px'});
       m.root.querySelector('#di-prune-cancel').onclick=m.close;
       m.root.querySelector('#di-prune-go').onclick=async function(){
@@ -736,7 +736,7 @@ function renderDockerPull(dc){
     <div id="di-pull-err" class="error-msg" style="display:none"></div>
     <div class="btn-row">
       <button class="btn btn-sm btn-ghost" id="di-pull-back">Cancel</button>
-      <button class="btn btn-sm btn-success" id="di-pull-go">Pull</button>
+      <button data-permission="docker:write" class="btn btn-sm btn-success" id="di-pull-go">Pull</button>
     </div>`,{maxWidth:'460px'});
   m.root.querySelector('#di-pull-back').addEventListener('click',()=>{m.close();renderDockerImages(dc)});
   m.root.querySelector('#di-pull-go').addEventListener('click',async function(){
@@ -759,7 +759,7 @@ async function renderDockerNetworks(dc){
     const j=await api('/docker/networks');
     if(!j.success){dc.innerHTML='<div class="error-msg">Failed</div>';return}
     const list=j.data||[];if(!Array.isArray(list)){dc.innerHTML='<div class="error-msg">Invalid</div>';return}
-    let html='<div class="flex justify-between items-center mb-3"><span style="font-size:0.85rem;color:var(--text-dim)">'+list.length+' network(s)</span><button class="btn btn-sm btn-success" id="dn-add">+ Create</button></div>';
+    let html='<div class="flex justify-between items-center mb-3"><span style="font-size:0.85rem;color:var(--text-dim)">'+list.length+' network(s)</span><button data-permission="docker:write" class="btn btn-sm btn-success" id="dn-add">+ Create</button></div>';
     if(list.length===0){
       html+='<div class="empty-state"><div class="icon">🔗</div><div>No networks</div></div>';
       dc.innerHTML=html;document.getElementById('dn-add').onclick=()=>renderDockerNetworkCreate(dc);return;
@@ -778,7 +778,7 @@ async function renderDockerNetworks(dc){
           <div class="dk-row"><span class="dk-k">Gateway</span><span class="dk-v mono">${escapeHtml(n.gateway||'—')}</span></div>
         </div>
         <div class="dk-actions">
-          <button class="btn btn-xs btn-danger dn-rm" data-id="${escapeHtml(n.id||'')}" data-name="${escapeHtml(n.name||'')}" ${isDefault?'disabled title="Built-in network"':'title="Remove"'}>🗑 Remove</button>
+          <button data-permission="docker:write" class="btn btn-xs btn-danger dn-rm" data-id="${escapeHtml(n.id||'')}" data-name="${escapeHtml(n.name||'')}" ${isDefault?'disabled title="Built-in network"':'title="Remove"'}>🗑 Remove</button>
         </div>
       </div>`;
     });
@@ -805,7 +805,7 @@ function renderDockerNetworkCreate(dc){
     <div id="dn-err" class="error-msg" style="display:none"></div>
     <div class="btn-row">
       <button class="btn btn-sm btn-ghost" id="dn-c-back">Cancel</button>
-      <button class="btn btn-sm btn-success" id="dn-c-do">Create</button>
+      <button data-permission="docker:write" class="btn btn-sm btn-success" id="dn-c-do">Create</button>
     </div>`,{maxWidth:'480px'});
   m.root.querySelector('#dn-c-back').addEventListener('click',m.close);
   m.root.querySelector('#dn-c-do').addEventListener('click',async function(){
@@ -837,8 +837,8 @@ async function renderDockerVolumes(dc){
         <span class="text-sm text-muted" id="dv-count">${list.length} volume(s)</span>
       </div>
       <div class="dk-toolbar-right">
-        <button class="btn btn-sm btn-ghost" id="dv-prune" title="Remove unused volumes">Prune</button>
-        <button class="btn btn-sm btn-success" id="dv-add">+ Create</button>
+        <button data-permission="docker:write" class="btn btn-sm btn-ghost" id="dv-prune" title="Remove unused volumes">Prune</button>
+        <button data-permission="docker:write" class="btn btn-sm btn-success" id="dv-add">+ Create</button>
       </div>
     </div>
     <div id="dv-body"></div>`;
@@ -862,7 +862,7 @@ async function renderDockerVolumes(dc){
             <div class="dk-row"><span class="dk-k">Mount</span><span class="dk-v mono" title="${escapeHtml(mp)}">${escapeHtml(mp||'—')}</span></div>
           </div>
           <div class="dk-actions">
-            <button class="btn btn-xs btn-danger dv-rm" data-name="${escapeHtml(nm)}" title="Remove">🗑 Remove</button>
+            <button data-permission="docker:write" class="btn btn-xs btn-danger dv-rm" data-name="${escapeHtml(nm)}" title="Remove">🗑 Remove</button>
           </div>
         </div>`;
       });
@@ -903,7 +903,7 @@ function renderDockerVolumeCreate(dc){
     <div id="dv-err" class="error-msg" style="display:none"></div>
     <div class="btn-row">
       <button class="btn btn-sm btn-ghost" id="dv-c-back">Cancel</button>
-      <button class="btn btn-sm btn-success" id="dv-c-do">Create</button>
+      <button data-permission="docker:write" class="btn btn-sm btn-success" id="dv-c-do">Create</button>
     </div>`,{maxWidth:'440px'});
   m.root.querySelector('#dv-c-back').addEventListener('click',m.close);
   m.root.querySelector('#dv-c-do').addEventListener('click',async function(){
@@ -993,7 +993,7 @@ function renderUserTable(c,users){
   let html=`
   <div class="flex justify-between items-center mb-4">
     <h2 style="font-size:1.1rem;font-weight:600">User Management</h2>
-    <button class="btn btn-sm" id="create-user-btn">+ Create User</button>
+    <button data-permission="user:admin" class="btn btn-sm" id="create-user-btn">+ Create User</button>
   </div>
   <div class="card"><div class="table-wrap"><table>
     <thead><tr><th>ID</th><th>Username</th><th>Authority</th><th>Status</th><th>Created At</th><th>Actions</th></tr></thead>
@@ -1008,9 +1008,9 @@ function renderUserTable(c,users){
       <td><span class="status-badge ${statusClass}">${status}</span></td>
       <td style="color:var(--text-dim);font-size:0.8rem">${u.created_at?formatTime(u.created_at):'N/A'}</td>
       <td>
-        <button class="btn btn-sm edit-user-btn" data-id="${u.id}">Edit</button>
-        <button class="btn btn-sm btn-danger delete-user-btn" data-id="${u.id}" data-username="${escapeHtml(u.username||'')}">Delete</button>
-        <button class="btn btn-sm btn-warning reset-pwd-btn" data-id="${u.id}">Reset Pwd</button>
+        <button data-permission="user:admin" class="btn btn-sm edit-user-btn" data-id="${u.id}">Edit</button>
+        <button data-permission="user:admin" class="btn btn-sm btn-danger delete-user-btn" data-id="${u.id}" data-username="${escapeHtml(u.username||'')}">Delete</button>
+        <button data-permission="user:admin" class="btn btn-sm btn-warning reset-pwd-btn" data-id="${u.id}">Reset Pwd</button>
       </td>
     </tr>`;
   });
@@ -1050,13 +1050,14 @@ function showUserModal(user,users,refreshFn){
       <select id="modal-authority">
         <option value="admin" ${isEdit&&user.authority==='admin'?'selected':''}>admin</option>
         <option value="user" ${isEdit&&user.authority==='user'?'selected':''}>user</option>
-        <option value="view" ${isEdit&&user.authority==='view'?'selected':''}>view</option>
+        <option value="operator" ${isEdit&&user.authority==='operator'?'selected':''}>operator</option>
+        <option value="viewer" ${isEdit&&user.authority==='viewer'?'selected':''}>viewer</option>
       </select>
     </div>
     <div id="modal-error" class="error-msg" style="display:none"></div>
     <div class="btn-row">
       <button class="btn btn-sm btn-ghost" id="modal-cancel-btn">Cancel</button>
-      <button class="btn btn-sm btn-success" id="modal-save-btn">${isEdit?'Save':'Create'}</button>
+      <button data-permission="user:admin" class="btn btn-sm btn-success" id="modal-save-btn">${isEdit?'Save':'Create'}</button>
     </div>`);
   const close=m.close;
   m.root.querySelector('#modal-cancel-btn').addEventListener('click',close);
@@ -1118,7 +1119,7 @@ async function resetPassword(id){
     <div id="modal-error" class="error-msg" style="display:none"></div>
     <div class="btn-row">
       <button class="btn btn-sm btn-ghost" id="modal-cancel-btn">Cancel</button>
-      <button class="btn btn-sm btn-warning" id="modal-reset-btn">Reset</button>
+      <button data-permission="user:admin" class="btn btn-sm btn-warning" id="modal-reset-btn">Reset</button>
     </div>`,{maxWidth:'380px'});
   const close=m.close;
   m.root.querySelector('#modal-cancel-btn').addEventListener('click',close);
@@ -1234,7 +1235,7 @@ async function loadProcessList(){
         <td>${memStr}</td>
         <td>${escapeHtml(p.status||'')}</td>
         <td style="color:var(--text-dim);font-size:0.8rem">${escapeHtml(rt)}</td>
-        <td><button class="btn btn-sm btn-danger kill-process-btn" data-pid="${p.pid}" data-name="${escapeHtml(p.name||'')}">Kill</button></td>
+        <td><button data-permission="process:write" class="btn btn-sm btn-danger kill-process-btn" data-pid="${p.pid}" data-name="${escapeHtml(p.name||'')}">Kill</button></td>
       </tr>`;
     });
     html+='</tbody></table></div>';
@@ -1303,9 +1304,9 @@ async function renderServiceManagement(){
         <td>${escapeHtml(s.sub||'')}</td>
         <td style="color:var(--text-muted);max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(s.description||'')}</td>
         <td>
-          <button class="btn btn-sm btn-success service-action" data-name="${escapeHtml(s.name||'')}" data-action="start">Start</button>
-          <button class="btn btn-sm btn-warning service-action" data-name="${escapeHtml(s.name||'')}" data-action="stop">Stop</button>
-          <button class="btn btn-sm service-action" data-name="${escapeHtml(s.name||'')}" data-action="restart">Restart</button>
+          <button data-permission="service:write" class="btn btn-sm btn-success service-action" data-name="${escapeHtml(s.name||'')}" data-action="start">Start</button>
+          <button data-permission="service:write" class="btn btn-sm btn-warning service-action" data-name="${escapeHtml(s.name||'')}" data-action="stop">Stop</button>
+          <button data-permission="service:write" class="btn btn-sm service-action" data-name="${escapeHtml(s.name||'')}" data-action="restart">Restart</button>
         </td>
       </tr>`;
     });
@@ -1717,7 +1718,7 @@ async function renderWebServer(){
   </div>
   <div class="tabs">
     <div class="tab active" data-tab="status">Sites List</div>
-    <div class="tab" data-tab="create">Create Site</div>
+    <div class="tab" data-permission="site:write" data-tab="create">Create Site</div>
     <div class="tab" data-tab="ssl">SSL</div>
     <div class="tab" data-tab="config">Config</div>
   </div>
@@ -1788,7 +1789,7 @@ async function renderWebServerSites(tc){
     let html=`<div class="dk-toolbar">
       <div class="dk-toolbar-left"><span class="text-sm text-muted">${sites.length} site(s)</span></div>
       <div class="dk-toolbar-right">
-        <button class="btn btn-sm btn-ghost" id="ws-sites-reload">Reload Nginx</button>
+        <button data-permission="site:write" class="btn btn-sm btn-ghost" id="ws-sites-reload">Reload Nginx</button>
         <button class="btn btn-sm btn-ghost" id="ws-sites-refresh">⟳ Refresh</button>
       </div>
     </div>`;
@@ -1819,8 +1820,8 @@ async function renderWebServerSites(tc){
             <div class="dk-row"><span class="dk-k">File</span><span class="dk-v mono" title="${escapeHtml(path||fileName)}">${escapeHtml(fileName)}</span></div>
           </div>
           <div class="dk-actions">
-            <button class="btn btn-xs ${enabled?'btn-warning':'btn-success'} site-toggle-btn" data-name="${escapeHtml(fileName)}" data-enable="${enabled?'false':'true'}">${enabled?'Disable':'Enable'}</button>
-            <button class="btn btn-xs btn-danger site-delete-btn" data-name="${escapeHtml(fileName)}">Delete</button>
+            <button data-permission="site:write" class="btn btn-xs ${enabled?'btn-warning':'btn-success'} site-toggle-btn" data-name="${escapeHtml(fileName)}" data-enable="${enabled?'false':'true'}">${enabled?'Disable':'Enable'}</button>
+            <button data-permission="site:write" class="btn btn-xs btn-danger site-delete-btn" data-name="${escapeHtml(fileName)}">Delete</button>
           </div>
         </div>`;
       });
@@ -1907,7 +1908,7 @@ function renderWebServerCreate(tc){
       <textarea id="ws-custom-config" rows="6" class="config-area" placeholder="${webServerKind==='apache'?'# Additional Apache directives':webServerKind==='caddy'?'# Additional Caddy directives':'# Additional nginx directives'}"></textarea>
     </div>
     <div id="ws-create-error" class="error-msg" style="display:none"></div>
-    <button class="btn btn-success mt-3" id="ws-create-btn">Create Site</button>
+    <button data-permission="site:write" class="btn btn-success mt-3" id="ws-create-btn">Create Site</button>
   </div>`;
 
   document.getElementById('ws-create-btn').addEventListener('click',async()=>{
@@ -1952,7 +1953,7 @@ function renderWebServerConfig(tc){
   tc.innerHTML=`
   <div class="card">
     <p style="color:var(--text-muted);margin-bottom:1rem;font-size:0.9rem">Manage ${webServerLabel()} configuration</p>
-    <button class="btn btn-warning" id="ws-reload-btn">Reload ${webServerLabel()}</button>
+    <button data-permission="site:write" class="btn btn-warning" id="ws-reload-btn">Reload ${webServerLabel()}</button>
     <div id="ws-reload-result" class="mt-3" style="display:none"></div>
   </div>`;
 
@@ -2013,9 +2014,9 @@ async function renderWebServerSsl(tc){
     html+=`<div class="flex justify-between items-center mb-4">
       <h3 style="font-size:0.95rem;font-weight:600">SSL Certificates</h3>
       <div>
-        <button class="btn btn-sm btn-success" id="ssl-issue-btn">+ Issue</button>
-        <button class="btn btn-sm" id="ssl-upload-btn" style="margin-left:4px">Upload</button>
-        <button class="btn btn-sm" id="ssl-selfsigned-btn" style="margin-left:4px">Self-Signed</button>
+        <button data-permission="cert:issue" class="btn btn-sm btn-success" id="ssl-issue-btn">+ Issue</button>
+        <button data-permission="cert:issue" class="btn btn-sm" id="ssl-upload-btn" style="margin-left:4px">Upload</button>
+        <button data-permission="cert:issue" class="btn btn-sm" id="ssl-selfsigned-btn" style="margin-left:4px">Self-Signed</button>
       </div>
     </div>`;
 
@@ -2028,7 +2029,7 @@ async function renderWebServerSsl(tc){
     } else {
       html+=`<div class="card mb-4" style="padding:8px 14px;background:var(--bg);font-size:0.85rem">
         <span style="color:var(--warning)">⚠</span> No ACME account registered.
-        <button class="btn btn-sm" id="ssl-register-account-btn" style="margin-left:8px">Register</button>
+        <button data-permission="cert:issue" class="btn btn-sm" id="ssl-register-account-btn" style="margin-left:8px">Register</button>
       </div>`;
     }
 
@@ -2064,9 +2065,9 @@ async function renderWebServerSsl(tc){
             <div class="dk-row"><span class="dk-k">Key</span><span class="dk-v">${escapeHtml(keyType||'—')}</span></div>
           </div>
           <div class="dk-actions">
-            <button class="btn btn-xs btn-ghost ssl-renew-btn" data-domain="${escapeHtml(domain)}">Renew</button>
-            <button class="btn btn-xs btn-ghost ssl-deploy-btn" data-domain="${escapeHtml(domain)}">Deploy</button>
-            <button class="btn btn-xs btn-danger ssl-delete-btn" data-domain="${escapeHtml(domain)}">Delete</button>
+            <button data-permission="cert:issue" class="btn btn-xs btn-ghost ssl-renew-btn" data-domain="${escapeHtml(domain)}">Renew</button>
+            <button data-permission="cert:deploy" class="btn btn-xs btn-ghost ssl-deploy-btn" data-domain="${escapeHtml(domain)}">Deploy</button>
+            <button data-permission="cert:issue" class="btn btn-xs btn-danger ssl-delete-btn" data-domain="${escapeHtml(domain)}">Delete</button>
           </div>
         </div>`;
       });
@@ -2127,7 +2128,7 @@ async function renderWebServerSsl(tc){
           <div class="error-msg" id="ssl-dep-err" style="display:none"></div>
           <div class="btn-row">
             <button class="btn btn-sm btn-ghost" id="ssl-dep-cancel">Cancel</button>
-            <button class="btn btn-sm btn-success" id="ssl-dep-ok">Deploy</button>
+            <button data-permission="cert:deploy" class="btn btn-sm btn-success" id="ssl-dep-ok">Deploy</button>
           </div>`,{maxWidth:'420px'});
         const siteEl=m.root.querySelector('#ssl-dep-site');
         const customWrap=m.root.querySelector('#ssl-dep-custom-wrap');
@@ -2206,7 +2207,7 @@ async function renderWebServerSslAccount(tc){
     <div id="acct-error" class="error-msg" style="display:none"></div>
     <div class="btn-row mt-3">
       <button class="btn btn-sm" id="acct-back">Back</button>
-      <button class="btn btn-sm btn-success" id="acct-register">Register</button>
+      <button data-permission="cert:issue" class="btn btn-sm btn-success" id="acct-register">Register</button>
     </div>
   </div>`;
 
@@ -2284,7 +2285,7 @@ async function renderWebServerSslIssue(tc,providers){
     <div id="ssl-issue-result" style="display:none"></div>
     <div class="btn-row mt-3">
       <button class="btn btn-sm" id="ssl-issue-back">Back</button>
-      <button class="btn btn-sm btn-success" id="ssl-issue-start">Issue Certificate</button>
+      <button data-permission="cert:issue" class="btn btn-sm btn-success" id="ssl-issue-start">Issue Certificate</button>
     </div>
   </div>`;
 
@@ -2357,7 +2358,7 @@ function renderWebServerSslUpload(tc){
     <div id="ssl-up-error" class="error-msg" style="display:none"></div>
     <div class="btn-row mt-3">
       <button class="btn btn-sm" id="ssl-up-back">Back</button>
-      <button class="btn btn-sm btn-success" id="ssl-up-do">Upload</button>
+      <button data-permission="cert:issue" class="btn btn-sm btn-success" id="ssl-up-do">Upload</button>
     </div>
   </div>`;
   document.getElementById('ssl-up-back').addEventListener('click',()=>renderWebServerSsl(tc));
@@ -2392,7 +2393,7 @@ function renderWebServerSslSelfSigned(tc){
     <div id="ssl-ss-error" class="error-msg" style="display:none"></div>
     <div class="btn-row mt-3">
       <button class="btn btn-sm" id="ssl-ss-back">Back</button>
-      <button class="btn btn-sm btn-success" id="ssl-ss-do">Generate</button>
+      <button data-permission="cert:issue" class="btn btn-sm btn-success" id="ssl-ss-do">Generate</button>
     </div>
   </div>`;
   document.getElementById('ssl-ss-back').addEventListener('click',()=>renderWebServerSsl(tc));
@@ -2461,7 +2462,7 @@ async function renderFirewall(){
           <td>${escapeHtml(prot)}</td>
           <td style="font-family:monospace;font-size:0.8rem">${escapeHtml(source)}</td>
           <td style="font-family:monospace;font-size:0.8rem">${escapeHtml(dest)}</td>
-          <td><button class="btn btn-xs btn-danger fw-del-row" data-chain="${escapeHtml(chain)}" data-num="${num}">Delete</button></td>
+          <td><button data-permission="firewall:write" class="btn btn-xs btn-danger fw-del-row" data-chain="${escapeHtml(chain)}" data-num="${num}">Delete</button></td>
         </tr>`;
       });
     }
@@ -2483,7 +2484,7 @@ async function renderFirewall(){
           <label>Rule</label>
           <input type="text" id="fw-add-rule" placeholder="-s 192.168.1.0/24 -j ACCEPT">
         </div>
-        <button class="btn btn-sm btn-success" id="fw-add-rule-btn">Add Rule</button>
+        <button data-permission="firewall:write" class="btn btn-sm btn-success" id="fw-add-rule-btn">Add Rule</button>
         <div id="fw-add-error" class="error-msg" style="display:none"></div>
       </div>
       <div class="card">
@@ -2500,7 +2501,7 @@ async function renderFirewall(){
           <label>Rule Number</label>
           <input type="number" id="fw-del-num" min="1" placeholder="1">
         </div>
-        <button class="btn btn-sm btn-danger" id="fw-del-rule-btn">Delete Rule</button>
+        <button data-permission="firewall:write" class="btn btn-sm btn-danger" id="fw-del-rule-btn">Delete Rule</button>
         <div id="fw-del-error" class="error-msg" style="display:none"></div>
       </div>
       <div class="card">
@@ -2517,7 +2518,7 @@ async function renderFirewall(){
             <option value="both">Both</option>
           </select>
         </div>
-        <button class="btn btn-sm btn-success" id="fw-open-port-btn">Open Port</button>
+        <button data-permission="firewall:write" class="btn btn-sm btn-success" id="fw-open-port-btn">Open Port</button>
         <div id="fw-port-error" class="error-msg" style="display:none"></div>
       </div>
     </div>`;
@@ -2697,8 +2698,8 @@ async function renderInstaller(){
           </div>
           <div class="app-desc">${escapeHtml(s.description)}</div>
           <div class="app-actions">
-            <button class="btn btn-sm btn-success inst-install" data-soft="${escapeHtml(s.name)}">Install</button>
-            <button class="btn btn-sm btn-ghost inst-uninstall" data-soft="${escapeHtml(s.name)}">Uninstall</button>
+            <button data-permission="app:install" class="btn btn-sm btn-success inst-install" data-soft="${escapeHtml(s.name)}">Install</button>
+            <button data-permission="app:uninstall" class="btn btn-sm btn-ghost inst-uninstall" data-soft="${escapeHtml(s.name)}">Uninstall</button>
           </div>
         </div>`;
       });
@@ -2733,7 +2734,7 @@ function installSoftware(soft){
     <div class="error-msg" id="inst-err" style="display:none"></div>
     <div class="btn-row">
       <button class="btn btn-sm btn-ghost" id="inst-cancel">Cancel</button>
-      <button class="btn btn-sm btn-success" id="inst-go" disabled>Install</button>
+      <button data-permission="app:install" class="btn btn-sm btn-success" id="inst-go" disabled>Install</button>
     </div>`,{maxWidth:'420px'});
   const go=m.root.querySelector('#inst-go');
   const err=m.root.querySelector('#inst-err');

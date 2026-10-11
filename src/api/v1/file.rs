@@ -35,6 +35,31 @@ fn effective_roots(roots: &Option<web::Data<FileRootConfig>>) -> Vec<PathBuf> {
         .unwrap_or_else(path_bounds::managed_roots)
 }
 
+pub async fn roots(
+    user: AuthUser,
+    pool: web::Data<DBPool>,
+    roots: Option<web::Data<FileRootConfig>>,
+) -> HttpResponse {
+    if let Err(err) = rbac::require_perm(pool.get_ref(), &user, PERM_FILE_READ) {
+        return err.error_response();
+    }
+    let configured = effective_roots(&roots);
+    let available: Vec<_> = configured
+        .iter()
+        .filter(|root| {
+            path_bounds::resolve_existing_under(&root.to_string_lossy(), &configured).is_ok()
+                && root.is_dir()
+        })
+        .map(|root| root.to_string_lossy().into_owned())
+        .collect();
+    HttpResponse::Ok().json(ResponseStructure {
+        success: true,
+        code: 200,
+        message: "success".into(),
+        data: Some(serde_json::json!({"roots": configured, "available": available})),
+    })
+}
+
 pub async fn list(
     user: AuthUser,
     pool: web::Data<DBPool>,
@@ -110,7 +135,7 @@ pub async fn save(
             ) {
                 // The file is already written; surface the audit failure
                 // instead of dropping it silently. Reconciliation marks the
-                // intent aborted if the write truly failed.
+                // intent outcome unknown if completion could not be saved.
                 crate::log_error!(
                     target: "audit",
                     "audit completion failed for {}: {}",

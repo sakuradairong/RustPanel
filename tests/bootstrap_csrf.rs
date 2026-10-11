@@ -98,6 +98,60 @@ async fn must_change_password_blocks_privileged_routes_but_allows_me() {
 }
 
 #[actix_web::test]
+async fn password_change_is_atomic_and_incorrect_password_keeps_the_session() {
+    use diesel::{sql_query, sql_types::Text, RunQueryDsl};
+    let (_f, pool, bearer) = pool_user(true);
+    let original = rust_panel::service::password::hash_argon2id("old-password").unwrap();
+    sql_query("UPDATE rp_users SET password = ?1").bind::<Text, _>(&original).execute(&mut *pool.get().unwrap()).unwrap();
+    let app = actix_test::init_service(App::new().app_data(web::Data::new(pool.clone())).service(api::route::v1())).await;
+    let request = |current: &str| actix_test::TestRequest::post().uri("/api/v1/user/change-password")
+        .insert_header(("Authorization", format!("Bearer {bearer}")))
+        .set_json(serde_json::json!({"current_password":current,"new_password":"new-password"})).to_request();
+    assert_eq!(actix_test::call_service(&app, request("incorrect")).await.status(), StatusCode::BAD_REQUEST);
+    pool.get().unwrap().batch_execute("CREATE TRIGGER fail_version BEFORE UPDATE OF token_version ON rp_users BEGIN SELECT RAISE(ABORT, 'version failed'); END;").unwrap();
+    assert_eq!(actix_test::call_service(&app, request("old-password")).await.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    #[derive(diesel::QueryableByName)]
+    struct Password { #[diesel(sql_type = Text)] password: String }
+    let row: Password = sql_query("SELECT password FROM rp_users").get_result(&mut *pool.get().unwrap()).unwrap();
+    assert_eq!(row.password, original);
+    let me = || actix_test::TestRequest::get().uri("/api/v1/user/me").insert_header(("Authorization", format!("Bearer {bearer}"))).to_request();
+    assert_eq!(actix_test::call_service(&app, me()).await.status(), StatusCode::OK);
+    pool.get().unwrap().batch_execute("DROP TRIGGER fail_version").unwrap();
+    assert_eq!(actix_test::call_service(&app, request("old-password")).await.status(), StatusCode::OK);
+    assert_eq!(actix_test::call_service(&app, me()).await.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[actix_web::test]
+async fn actual_login_response_sets_a_protected_cookie_and_logout_removes_it() {
+    use diesel::{sql_query, sql_types::Text, RunQueryDsl};
+    use rust_panel::{common::fun::md5, service::global::CONF};
+    let (_f, pool, _) = pool_user(false);
+    let hash = rust_panel::service::password::hash_argon2id("login-password").unwrap();
+    sql_query("UPDATE rp_users SET password = ?1").bind::<Text, _>(&hash).execute(&mut *pool.get().unwrap()).unwrap();
+    let app = actix_test::init_service(App::new().app_data(web::Data::new(pool)).service(api::route::v1())).await;
+    let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis();
+    let iv = md5(CONF.app.security_dir.clone());
+    let key = md5(format!("{}{timestamp}{iv}", CONF.app.security_dir));
+    let encrypt = |value: &str| gmsm::sm4::sm4_cbc_encrypt_hex(value, &key, &iv);
+    let response = actix_test::call_service(&app, actix_test::TestRequest::post()
+        .uri(&format!("/api/v1/login/sign/{}", CONF.app.security_dir))
+        .set_json(serde_json::json!({"username":encrypt("u"),"password":encrypt("login-password"),"timestamp":timestamp})).to_request()).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let cookie = response.response().cookies().find(|cookie| cookie.name() == "token").unwrap();
+    assert_eq!(cookie.path(), Some("/"));
+    assert_eq!(cookie.http_only(), Some(true));
+    assert_eq!(cookie.same_site(), Some(actix_web::cookie::SameSite::Lax));
+    assert_eq!(cookie.secure().unwrap_or(false), rust_panel::service::bind_policy::cookie_secure_recommended(&CONF.app.host));
+    let body: serde_json::Value = actix_test::read_body_json(response).await;
+    let response = actix_test::call_service(&app, actix_test::TestRequest::post().uri("/api/v1/login/logout")
+        .insert_header(("Authorization", format!("Bearer {}", body["data"]["token"].as_str().unwrap()))).to_request()).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let cookie = response.response().cookies().find(|cookie| cookie.name() == "token").unwrap();
+    assert_eq!(cookie.path(), Some("/"));
+    assert_eq!(cookie.max_age().unwrap().whole_seconds(), 0);
+}
+
+#[actix_web::test]
 async fn cookie_mutating_request_without_origin_is_forbidden() {
     let (_f, pool, bearer) = pool_user(false);
     let app = actix_test::init_service(

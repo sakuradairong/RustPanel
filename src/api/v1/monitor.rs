@@ -18,7 +18,7 @@ use crate::api::auth::{authenticate_token, AuthUser};
 use crate::api::{ResponseStructure, ResponseStructureError};
 use crate::errors::common::CommonError;
 use crate::service::db::DBPool;
-use crate::service::sse_tickets::{self, MONITOR_STREAM};
+use crate::service::sse_tickets::{self, MONITOR_STREAM, StreamIdentity};
 
 lazy_static! {
     static ref SYS: Mutex<System> = Mutex::new(System::new_all());
@@ -69,23 +69,22 @@ struct SystemStats {
 
 /// Feeds the SSE body from a spawned task so no blocking work (SQLite status
 /// checks, sysinfo refresh) ever runs on the async worker thread.
-async fn run_monitor_stream(pool: DBPool, user_id: i32, tx: tokio::sync::mpsc::Sender<web::Bytes>) {
+async fn run_monitor_stream(
+    pool: DBPool,
+    identity: StreamIdentity,
+    tx: tokio::sync::mpsc::Sender<web::Bytes>,
+) {
     let mut interval = tokio::time::interval(Duration::from_secs(2));
-    let mut ticks: u32 = 0;
     loop {
         interval.tick().await;
-        ticks = ticks.wrapping_add(1);
-        // Re-check account status every ~10s (5 * 2s ticks). DB errors and
+        // Re-check the issuing session and current permissions every 2s. DB errors and
         // join failures fail closed (stream ends).
-        if ticks % 5 == 0 {
+        {
             let check_pool = pool.clone();
-            let still_ok = tokio::task::spawn_blocking(move || {
-                match check_pool.get() {
-                    Ok(mut conn) => {
-                        sse_tickets::user_still_active(&mut conn, user_id).unwrap_or(false)
-                    }
-                    Err(_) => false,
-                }
+            let check_identity = identity.clone();
+            let still_ok = tokio::task::spawn_blocking(move || match check_pool.get() {
+                Ok(mut conn) => sse_tickets::validate_identity(&mut conn, &check_identity).is_ok(),
+                Err(_) => false,
             })
             .await
             .unwrap_or(false);
@@ -173,9 +172,9 @@ fn collect_stats() -> SystemStats {
     }
 }
 
-fn sse_ok(pool: DBPool, user_id: i32) -> HttpResponse {
+fn sse_ok(pool: DBPool, identity: StreamIdentity) -> HttpResponse {
     let (tx, rx) = tokio::sync::mpsc::channel::<web::Bytes>(8);
-    tokio::spawn(run_monitor_stream(pool, user_id, tx));
+    tokio::spawn(run_monitor_stream(pool, identity, tx));
     HttpResponse::Ok()
         .insert_header(("Content-Type", "text/event-stream"))
         .insert_header(("Cache-Control", "no-cache"))
@@ -203,12 +202,12 @@ pub async fn issue_sse_ticket(
     body: web::Json<TicketBody>,
 ) -> HttpResponse {
     let stream = body.stream.clone();
-    let user_id = user.id;
+    let identity = StreamIdentity::from(&user);
     match web::block(move || {
-        let mut conn = pool.get().map_err(|_| {
-            CommonError::ServiceUnavailable("SSE ticket store unavailable".into())
-        })?;
-        sse_tickets::issue_ticket(&mut conn, user_id, &stream, sse_tickets::DEFAULT_TTL_SECS)
+        let mut conn = pool
+            .get()
+            .map_err(|_| CommonError::ServiceUnavailable("SSE ticket store unavailable".into()))?;
+        sse_tickets::issue_ticket(&mut conn, &identity, &stream, sse_tickets::DEFAULT_TTL_SECS)
     })
     .await
     {
@@ -239,11 +238,7 @@ pub async fn monitor_sse(req: HttpRequest) -> HttpResponse {
             .ok();
 
     // Long-lived JWTs must not appear in URLs (logs / Referer).
-    if params
-        .as_ref()
-        .and_then(|p| p.get("token"))
-        .is_some()
-    {
+    if params.as_ref().and_then(|p| p.get("token")).is_some() {
         return HttpResponse::Unauthorized().json(ResponseStructureError {
             success: false,
             code: 401,
@@ -260,15 +255,11 @@ pub async fn monitor_sse(req: HttpRequest) -> HttpResponse {
             let mut conn = pool_ticket.get().map_err(|_| {
                 CommonError::ServiceUnavailable("SSE ticket store unavailable".into())
             })?;
-            let user_id = sse_tickets::consume_ticket(&mut conn, &ticket, &expected)?;
-            if !sse_tickets::user_still_active(&mut conn, user_id)? {
-                return Err(CommonError::Unauthorized("Invalid credentials".into()));
-            }
-            Ok(user_id)
+            sse_tickets::consume_ticket(&mut conn, &ticket, &expected)
         })
         .await
         {
-            Ok(Ok(user_id)) => sse_ok(pool.get_ref().clone(), user_id),
+            Ok(Ok(identity)) => sse_ok(pool.get_ref().clone(), identity),
             Ok(Err(err)) => err.error_response(),
             Err(_) => CommonError::ServiceUnavailable("SSE ticket service unavailable".into())
                 .error_response(),
@@ -280,16 +271,26 @@ pub async fn monitor_sse(req: HttpRequest) -> HttpResponse {
         .headers()
         .get("Authorization")
         .and_then(|v| v.to_str().ok())
-        .map(|s| {
-            s.strip_prefix("Bearer ")
-                .unwrap_or(s)
-                .to_string()
-        });
+        .map(|s| s.strip_prefix("Bearer ").unwrap_or(s).to_string());
 
     if let Some(token) = bearer {
         let pool_auth = pool.clone();
-        return match web::block(move || authenticate_token(&token, pool_auth.get_ref())).await {
-            Ok(Ok(user)) => sse_ok(pool.get_ref().clone(), user.id),
+        return match web::block(move || {
+            let user = authenticate_token(&token, pool_auth.get_ref())?;
+            if user.must_change_password {
+                return Err(CommonError::Forbidden(
+                    "Password change required before continuing".into(),
+                ));
+            }
+            let mut conn = pool_auth.get().map_err(|_| {
+                CommonError::ServiceUnavailable("Authentication database unavailable".into())
+            })?;
+            sse_tickets::validate_identity(&mut conn, &StreamIdentity::from(&user))?;
+            Ok::<_, CommonError>(user)
+        })
+        .await
+        {
+            Ok(Ok(user)) => sse_ok(pool.get_ref().clone(), StreamIdentity::from(&user)),
             Ok(Err(error)) => error.error_response(),
             Err(_) => CommonError::ServiceUnavailable("Authentication service unavailable".into())
                 .error_response(),

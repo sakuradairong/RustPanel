@@ -339,18 +339,33 @@ pub async fn exec_container(
     let cmd = body.cmd.trim();
     if cmd.is_empty() {
         return HttpResponse::BadRequest().json(ResponseStructureError {
-            success: false, code: 400,
+            success: false,
+            code: 400,
             message: String::from("cmd is required"),
         });
     }
     let argv = vec![String::from("/bin/sh"), String::from("-c"), cmd.to_string()];
     match container::exec(&path.id, argv).await {
-        Ok(output) => HttpResponse::Ok().json(ResponseStructure {
-            success: true, code: 200, message: String::from("success"),
-            data: Some(serde_json::json!({"output": output})),
-        }),
+        Ok(result) => {
+            let success = result.exit_code == Some(0) && !result.timed_out;
+            let message = if result.timed_out {
+                "Command response timed out; the process may still be running".into()
+            } else if success {
+                "success".into()
+            } else {
+                format!("Command finished with exit code {:?}", result.exit_code)
+            };
+            HttpResponse::Ok().json(ResponseStructure {
+                success,
+                code: if success { 200 } else { 422 },
+                message,
+                data: Some(result),
+            })
+        }
         Err(err) => HttpResponse::InternalServerError().json(ResponseStructureError {
-            success: false, code: 500, message: err.to_string(),
+            success: false,
+            code: 500,
+            message: err.to_string(),
         }),
     }
 }

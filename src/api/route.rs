@@ -26,6 +26,7 @@ pub fn v1() -> actix_web::Scope {
                     .service(web::resource("/read").route(web::get().to(v1::log::read_log))),
             )
             .service(web::resource("/file/list").route(web::get().to(v1::file::list)))
+            .service(web::resource("/file/roots").route(web::get().to(v1::file::roots)))
             .service(web::resource("/file/content").route(web::get().to(v1::file::content)))
             .service(web::resource("/file/save").route(web::post().to(v1::file::save)))
             .service(web::resource("/user/me").route(web::get().to(v1::user::get_me)))

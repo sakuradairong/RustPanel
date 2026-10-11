@@ -234,23 +234,58 @@ pub async fn unpause(container_id: &str) -> Result<(), Box<dyn Error + Send + Sy
     Ok(())
 }
 
-/// Run a one-shot command inside a running container and return combined stdout/stderr.
+const EXEC_OUTPUT_LIMIT: usize = 1024 * 1024;
+const EXEC_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+#[derive(Debug, Serialize)]
+pub struct ExecResult {
+    pub output: String,
+    pub exit_code: Option<i64>,
+    pub truncated: bool,
+    pub timed_out: bool,
+    pub exec_id: String,
+}
+
+async fn collect_exec_output<S>(
+    mut stream: S,
+    output: &mut Vec<u8>,
+    truncated: &mut bool,
+) -> Result<(), bollard::errors::Error>
+where
+    S: futures_util::Stream<Item = Result<LogOutput, bollard::errors::Error>> + Unpin,
+{
+    while let Some(item) = stream.next().await {
+        let message = match item? {
+            LogOutput::StdOut { message }
+            | LogOutput::StdErr { message }
+            | LogOutput::Console { message } => message,
+            LogOutput::StdIn { .. } => continue,
+        };
+        let remaining = EXEC_OUTPUT_LIMIT.saturating_sub(output.len());
+        *truncated |= message.len() > remaining;
+        output.extend_from_slice(&message[..message.len().min(remaining)]);
+    }
+    Ok(())
+}
+
+/// Drain output with bounded memory and an overall deadline, then inspect the
+/// command's exit status. Dropping the attachment on timeout does not kill a
+/// Docker exec process: report that uncertainty and never retry it automatically.
 pub async fn exec(
     container_id: &str,
     cmd: Vec<String>,
-) -> Result<String, Box<dyn Error + Send + Sync>> {
-    use bollard::container::LogOutput;
+) -> Result<ExecResult, Box<dyn Error + Send + Sync>> {
     use bollard::exec::{CreateExecOptions, StartExecOptions, StartExecResults};
-
     if cmd.is_empty() {
         return Err(Box::new(DockerContainerError {
             message: "command is required".into(),
         }));
     }
-
     let client = docker()?;
-    let created = client
-        .create_exec(
+    let deadline = tokio::time::Instant::now() + EXEC_TIMEOUT;
+    let created = tokio::time::timeout_at(
+        deadline,
+        client.create_exec(
             container_id,
             CreateExecOptions {
                 attach_stdout: Some(true),
@@ -258,35 +293,43 @@ pub async fn exec(
                 cmd: Some(cmd),
                 ..Default::default()
             },
-        )
-        .await?;
-
-    let results = client
-        .start_exec(&created.id, None::<StartExecOptions>)
-        .await?;
-
-    let mut output = String::new();
-    match results {
-        StartExecResults::Attached {
-            output: mut stream,
-            ..
-        } => {
-            while let Some(item) = stream.next().await {
-                match item {
-                    Ok(LogOutput::StdOut { message })
-                    | Ok(LogOutput::StdErr { message })
-                    | Ok(LogOutput::Console { message }) => {
-                        output.push_str(&String::from_utf8_lossy(&message));
-                    }
-                    Ok(LogOutput::StdIn { .. }) => {}
-                    Err(e) => return Err(Box::new(e)),
-                }
+        ),
+    )
+    .await
+    .map_err(|_| DockerContainerError {
+        message: "Docker exec creation timed out".into(),
+    })??;
+    let mut output = Vec::new();
+    let mut truncated = false;
+    let completed = tokio::time::timeout_at(deadline, async {
+        match client
+            .start_exec(&created.id, None::<StartExecOptions>)
+            .await?
+        {
+            StartExecResults::Attached { output: stream, .. } => {
+                collect_exec_output(stream, &mut output, &mut truncated).await?
+            }
+            StartExecResults::Detached => {
+                return Err(bollard::errors::Error::IOError {
+                    err: std::io::Error::new(std::io::ErrorKind::Other, "Unexpected detached exec"),
+                })
             }
         }
-        StartExecResults::Detached => {}
-    }
-
-    Ok(output)
+        let inspected = client.inspect_exec(&created.id).await?;
+        Ok::<_, bollard::errors::Error>(inspected.exit_code)
+    })
+    .await;
+    let (exit_code, timed_out) = match completed {
+        Ok(result) => (result?, false),
+        Err(_) => (None, true),
+    };
+    Ok(ExecResult {
+        output: String::from_utf8_lossy(&output).into_owned(),
+        exit_code,
+        truncated,
+        timed_out,
+        exec_id: created.id,
+    })
 }
 
 /// Start an interactive TTY exec session (stdin + stdout). Caller bridges I/O.
@@ -376,4 +419,44 @@ pub async fn stats(container_id: &str) -> Result<serde_json::Value, Box<dyn Erro
         }
     }
     Err(Box::new(std::io::Error::new(std::io::ErrorKind::NotFound, "no stats data")))
+}
+
+#[cfg(test)]
+mod exec_tests {
+    use super::*;
+    #[tokio::test]
+    async fn output_is_bounded_and_consumes_all_stdout_and_stderr() {
+        let chunks = vec![
+            Ok(LogOutput::StdOut {
+                message: vec![b'a'; EXEC_OUTPUT_LIMIT].into(),
+            }),
+            Ok(LogOutput::StdErr {
+                message: b"beyond limit".to_vec().into(),
+            }),
+        ];
+        let mut output = Vec::new();
+        let mut truncated = false;
+        collect_exec_output(
+            futures_util::stream::iter(chunks),
+            &mut output,
+            &mut truncated,
+        )
+        .await
+        .unwrap();
+        assert_eq!(output.len(), EXEC_OUTPUT_LIMIT);
+        assert!(truncated);
+    }
+
+    #[tokio::test]
+    async fn stalled_output_can_be_cancelled_at_the_deadline() {
+        let mut output = Vec::new();
+        let mut truncated = false;
+        let stream = futures_util::stream::pending::<Result<LogOutput, bollard::errors::Error>>();
+        assert!(tokio::time::timeout(
+            std::time::Duration::from_millis(10),
+            collect_exec_output(stream, &mut output, &mut truncated)
+        )
+        .await
+        .is_err());
+    }
 }

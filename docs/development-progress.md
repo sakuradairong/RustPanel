@@ -101,7 +101,7 @@
 
 | 任务 | 状态 | 本次实现 | 后续边界 |
 | --- | --- | --- | --- |
-| RP-10 TLS/bootstrap/cookie/CSRF | 已实现并验证 | 非 loopback 明文绑定拒启（需 `RP_TLS_CERT`/`RP_TLS_KEY` 或 `RP_ALLOW_INSECURE_PUBLIC_BIND`）；cookie `Secure`/`HttpOnly`/`SameSite=Lax`；cookie 写请求 Origin/Referer CSRF；`must_change_password` 门禁 + `POST /user/change-password`；示例 host `127.0.0.1` | 进程内 rustls 终结、ACME 面板证书、security_dir 轮换 UI 仍可增强 |
+| RP-10 TLS/bootstrap/cookie/CSRF | 已实现并验证 | 非 loopback 明文绑定拒启（需显式 `RP_ALLOW_INSECURE_PUBLIC_BIND`，证书环境变量不能启用 TLS）；cookie `Secure`/`HttpOnly`/`SameSite=Lax`；cookie 写请求 Origin/Referer CSRF；`must_change_password` 门禁 + `POST /user/change-password`；示例 host `127.0.0.1` | 进程内 rustls 终结、ACME 面板证书、security_dir 轮换 UI 仍可增强 |
 
 要点：测试累计 **63** 通过（44 库 + 19 集成）。
 
@@ -184,3 +184,9 @@ RP-01~RP-13 十一个 PR（#4~#14）按堆叠链逐个评审后合入 `dev`。�
 5. 将 DB/ACME/S3 凭证接入 RP-08 `secrets` 表。
 
 未完成全部 M0 前，不把已落地修复称为“生产安全已完成”。
+
+## 2026-10-11 审查整改
+
+以 `1a9cc4b` 为整改基线，逐项修复事务回滚、文件句柄与元数据、明文绑定绕过、登录 cookie、首次改密/登出、会话绑定 SSE、首启凭据交付、迁移历史、权限展示、日志 tail、审计未知状态、维护任务连接池和 KEK 文件权限。新迁移 `008_sse_sessions` 将期望 schema 升至 8，不修改历史迁移。
+
+完整问题映射、验证方法、部署影响与剩余边界见 [审查整改记录](review-remediation.md)。界面结构拆分属于后续维护改进；独立 runner、secret_ref 业务接入、refresh 轮换、SBOM/签名仍按原计划推进，本轮不将 M0 标为完成。最终 Rust 全套 117 项、Node 交互测试 5 项通过；JS 语法与差异检查通过。

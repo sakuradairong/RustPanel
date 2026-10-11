@@ -51,6 +51,15 @@ fn client_ip(req: &HttpRequest) -> String {
         .to_owned()
 }
 
+fn token_cookie(token: String, secure: bool) -> actix_web::cookie::Cookie<'static> {
+    actix_web::cookie::Cookie::build("token", token)
+        .path("/")
+        .http_only(true)
+        .secure(secure)
+        .same_site(actix_web::cookie::SameSite::Lax)
+        .finish()
+}
+
 pub async fn sign(
     req: HttpRequest,
     pool: web::Data<DBPool>,
@@ -124,7 +133,8 @@ pub async fn sign(
                     .unwrap()
                     .clear_success(&login_username, &ip);
                 return Ok(HttpResponse::Ok()
-                    .cookie(actix_web::cookie::Cookie::build("token", token_val.clone()).finish())
+                    .cookie(token_cookie(token_val.clone(),
+                        crate::service::bind_policy::cookie_secure_recommended(&CONF.app.host)))
                     .json(ResponseStructure {
                         success: true,
                         code: 200,
@@ -158,7 +168,12 @@ pub async fn logout(user: AuthUser, pool: web::Data<DBPool>) -> Result<HttpRespo
         Ok::<(), CommonError>(())
     })
     .await??;
-    Ok(HttpResponse::Ok().json(ResponseStructure {
+    let mut cookie = token_cookie(
+        String::new(),
+        crate::service::bind_policy::cookie_secure_recommended(&CONF.app.host),
+    );
+    cookie.make_removal();
+    Ok(HttpResponse::Ok().cookie(cookie).json(ResponseStructure {
         success: true,
         code: 200,
         message: String::from("success"),
@@ -308,6 +323,20 @@ mod tests {
     };
     use actix_web::web;
     use diesel::{connection::SimpleConnection, r2d2::ConnectionManager, SqliteConnection};
+
+    #[test]
+    fn login_cookie_has_security_attributes_and_matching_removal_path() {
+        for secure in [false, true] {
+            let mut cookie = super::token_cookie("test-token".into(), secure);
+            assert_eq!(cookie.path(), Some("/"));
+            assert_eq!(cookie.http_only(), Some(true));
+            assert_eq!(cookie.secure(), Some(secure));
+            assert_eq!(cookie.same_site(), Some(actix_web::cookie::SameSite::Lax));
+            cookie.make_removal();
+            assert_eq!(cookie.path(), Some("/"));
+            assert_eq!(cookie.max_age().unwrap().whole_seconds(), 0);
+        }
+    }
 
     fn pool() -> DBPool {
         let file = tempfile::NamedTempFile::new().unwrap();

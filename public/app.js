@@ -1,11 +1,29 @@
 // ── Render ──
 const $app=document.getElementById('app');
 
-function render(route){
+let currentUser=null;
+let renderEpoch=0;
+async function render(route){
+  const epoch=++renderEpoch;
   cleanupPage();
   const token=getToken();
   if(route==='/login')return renderLogin();
   if(!token)return navigate('/login');
+  try{
+    currentUser=await api('/user/me');
+    if(epoch!==renderEpoch||getToken()!==token)return;
+    if(!currentUser.id)throw new Error(currentUser.message||'Unable to load account');
+    localStorage.setItem('user',JSON.stringify(currentUser));
+    cachedMenus=null;
+  }catch(e){
+    if(epoch===renderEpoch&&e.message!=='Unauthorized')$app.innerHTML='<div class="error-msg">'+escapeHtml(e.message)+'</div>';
+    return;
+  }
+  if(currentUser.must_change_password||route==='/change-password')return renderChangePassword();
+  const permission=routePermission(route);
+  if(permission&&!hasPermission(permission)){
+    $app.innerHTML='<div class="error-msg">You do not have access to this page.</div>';return;
+  }
   if(route.startsWith('/file/view'))return layout(renderFileContent,route);
   if(route==='/home')return layout(renderDashboard,route);
   if(route==='/file/list')return layout(renderFileList,route);
@@ -99,6 +117,8 @@ function renderSidebar(activeRoute){
     }
     nav.innerHTML=html;
     sb.querySelectorAll('.nav-item[data-route]').forEach(el=>{
+      const permission=routePermission(el.dataset.route);
+      el.hidden=Boolean(permission&&!hasPermission(permission));
       el.addEventListener('click',()=>{navigate(el.dataset.route);closeSidebar()});
     });
     sb.querySelectorAll('.group-title').forEach(el=>{
@@ -149,7 +169,7 @@ function renderTopbar(route){
       title:'Sign Out',
       message:'Are you sure you want to sign out?',
       okText:'Sign Out',okClass:'btn-danger',
-      onConfirm:()=>{clearToken();cachedMenus=null;navigate('/login')}
+      onConfirm:signOut
     });
   });
   document.getElementById('sidebar-toggle')?.addEventListener('click',()=>{
@@ -158,6 +178,49 @@ function renderTopbar(route){
     const ov=document.getElementById('sidebar-overlay');
     if(ov)ov.classList.toggle('show');
   });
+}
+
+function resetLoginState(){
+  clearToken();cachedMenus=null;currentUser=null;fileRoots=[];fileListState={path:null,page:1};
+}
+
+async function signOut(){
+  const result=await api('/login/logout',{method:'POST'});
+  if(!result.success)throw new Error(result.message||'Sign out failed; please retry');
+  resetLoginState();navigate('/login');
+}
+
+function renderChangePassword(){
+  $app.innerHTML=`<div id="login-page"><form class="login-card" id="change-password-form">
+    <h1>Change password</h1><p class="subtitle">Set a new password before continuing.</p>
+    <div class="login-error" id="change-password-error"></div>
+    <div class="field"><label for="change-current">Current password</label><input type="password" id="change-current" autocomplete="current-password" required></div>
+    <div class="field"><label for="change-new">New password</label><input type="password" id="change-new" autocomplete="new-password" minlength="8" required></div>
+    <div class="field"><label for="change-confirm">Confirm new password</label><input type="password" id="change-confirm" autocomplete="new-password" minlength="8" required></div>
+    <button class="btn login-btn" id="change-submit" type="submit">Save password</button>
+    <button class="btn btn-ghost" id="change-signout" type="button">Sign out</button>
+  </form></div>`;
+  document.getElementById('change-signout').onclick=async()=>{
+    try{await signOut()}catch(e){showToast(e.message,'error')}
+  };
+  document.getElementById('change-password-form').onsubmit=async e=>{
+    e.preventDefault();
+    const error=document.getElementById('change-password-error');
+    const current=document.getElementById('change-current').value;
+    const password=document.getElementById('change-new').value;
+    const confirmation=document.getElementById('change-confirm').value;
+    const button=document.getElementById('change-submit');
+    error.classList.remove('show');
+    try{
+      if(!current||password.length<8)throw new Error('Enter your current password and a new password of at least 8 characters');
+      if(password!==confirmation)throw new Error('Passwords do not match');
+      button.disabled=true;
+      const result=await api('/user/change-password',{method:'POST',body:JSON.stringify({current_password:current,new_password:password})});
+      if(!result.success)throw new Error(result.message||'Password change failed');
+      resetLoginState();navigate('/login');showToast('Password updated. Please sign in again.','success');
+    }catch(err){error.textContent=err.message;error.classList.add('show')}
+    finally{button.disabled=false}
+  };
 }
 
 // ── Login ──
@@ -233,7 +296,7 @@ function renderLogin(){
         if(j.data.user)localStorage.setItem('user',JSON.stringify(j.data.user));
         localStorage.setItem('lastUsername',username);
         cachedMenus=null;
-        navigate('/home');
+        navigate(j.data.user&&j.data.user.must_change_password?'/change-password':'/home');
       } else {
         const msg=j.message||'Login failed';
         if(msg.includes('username_band')||msg.includes('band'))showErr('Account has been locked');
@@ -440,7 +503,8 @@ function formatSize(bytes){
 }
 
 // ── File Manager ──
-let fileListState={path:'/',page:1};
+let fileListState={path:null,page:1};
+let fileRoots=[];
 
 // Pick an icon for a file by extension.
 function fileIcon(name){
@@ -460,10 +524,10 @@ function renderFileBreadcrumb(path){
   if(!el)return;
   const parts=String(path||'/').split('/').filter(Boolean);
   let acc='';
-  let html='<span class="crumb" data-path="/">🏠 /</span>';
+  let html=isManagedPath('/')?'<span class="crumb" data-path="/">🏠 /</span>':'';
   parts.forEach(seg=>{
     acc+='/'+seg;
-    html+='<span class="crumb-sep">/</span><span class="crumb" data-path="'+escapeHtml(acc)+'">'+escapeHtml(seg)+'</span>';
+    html+='<span class="crumb-sep">/</span>'+(isManagedPath(acc)?'<span class="crumb" data-path="'+escapeHtml(acc)+'">'+escapeHtml(seg)+'</span>':'<span>'+escapeHtml(seg)+'</span>');
   });
   el.innerHTML=html;
   el.querySelectorAll('.crumb[data-path]').forEach(cr=>{
@@ -474,18 +538,27 @@ function renderFileBreadcrumb(path){
 async function renderFileList(){
   const c=document.getElementById('content');
   if(!c)return;
+  try{
+    const result=await api('/file/roots');
+    if(!result.success)throw new Error(result.message||'Unable to load managed directories');
+    fileRoots=(result.data.available||[]).map(root=>root==='/'?root:root.replace(/\/+$/,''));
+    if(!fileRoots.length){c.innerHTML='<div class="empty-state">No managed directories are available.</div>';return}
+    if(!isManagedPath(fileListState.path))fileListState.path=fileRoots[0];
+  }catch(e){if(e.message!=='Unauthorized')c.innerHTML='<div class="error-msg">'+escapeHtml(e.message)+'</div>';return}
   c.innerHTML=`
+  <select id="file-root-select" aria-label="Managed directory">${fileRoots.map(root=>'<option value="'+escapeHtml(root)+'"'+(root===fileListState.path?' selected':'')+'>'+escapeHtml(root)+'</option>').join('')}</select>
   <div id="file-breadcrumb" class="file-breadcrumb"></div>
   <div class="file-path">
-    <input type="text" id="file-path-input" value="${fileListState.path}" placeholder="/">
+    <input type="text" id="file-path-input" value="${escapeHtml(fileListState.path)}" placeholder="/">
     <button class="btn btn-sm" id="file-go-btn">Go</button>
   </div>
   <div class="card" id="file-list-container">
     <div style="text-align:center;padding:2rem;color:var(--text-dim)">Loading...</div>
   </div>`;
 
+  document.getElementById('file-root-select').addEventListener('change',e=>{fileListState.path=e.target.value;fileListState.page=1;loadFileList()});
   document.getElementById('file-go-btn').addEventListener('click',()=>{
-    fileListState.path=document.getElementById('file-path-input').value.trim()||'/';
+    fileListState.path=document.getElementById('file-path-input').value.trim()||fileRoots[0];
     fileListState.page=1;
     loadFileList();
   });
@@ -501,7 +574,7 @@ async function loadFileList(){
   if(!container)return;
   container.innerHTML='<div style="text-align:center;padding:2rem;color:var(--text-dim)">Loading...</div>';
   try{
-    const path=fileListState.path||'/';
+    const path=fileListState.path||fileRoots[0];
     const j=await api('/file/list?path='+encodeURIComponent(path)+'&current='+fileListState.page+'&pageSize=50');
     if(!j.success){container.innerHTML='<div class="error-msg">Failed to load directory</div>';return}
     const d=j.data;
@@ -510,7 +583,7 @@ async function loadFileList(){
     const inputEl=document.getElementById('file-path-input');
     if(inputEl)inputEl.value=curPath;
     let html='<div class="table-wrap"><table class="file-list-table"><thead><tr><th>Name</th><th>Size</th><th>Modified</th></tr></thead><tbody>';
-    if(d.path&&d.path!==path){
+    if(d.path&&isManagedPath(d.path.replace(/\/?[^\/]*\/?$/,'')||'/')){
       const parent=d.path.replace(/\/?[^\/]*\/?$/,'')||'/';
       html+=`<tr><td class="clickable" data-path="${escapeHtml(parent)}" data-type="dir">↩ .. (parent)</td><td></td><td></td></tr>`;
     }
@@ -540,4 +613,31 @@ async function loadFileList(){
   }catch(e){
     if(e.message!=='Unauthorized')container.innerHTML=`<div class="error-msg">Error: ${e.message}</div>`;
   }
+}
+
+function isManagedPath(path){
+  return typeof path==='string'&&fileRoots.some(root=>root==='/'||path===root||path.startsWith(root+'/'));
+}
+function hasPermission(permission){
+  return Boolean(currentUser&&Array.isArray(currentUser.permissions)&&currentUser.permissions.includes(permission));
+}
+function routePermission(route){
+  const base=route.split('?')[0];
+  if(base.startsWith('/file/'))return 'file:read';
+  return {'/home':'monitor:read','/docker/containers':'docker:read','/system/info':'system:read',
+    '/admin/users':'user:admin','/process':'process:read','/services':'service:read','/logs':'log:read',
+    '/monitor':'monitor:read','/webserver':'site:read','/firewall':'firewall:read',
+    '/installer':'app:read','/appstore':'app:read','/apps':'app:read'}[base];
+}
+function applyPermissions(root=document){
+  root.querySelectorAll('[data-permission]').forEach(element=>{
+    element.hidden=!hasPermission(element.dataset.permission);
+  });
+}
+if(typeof MutationObserver!=='undefined'){
+  new MutationObserver(()=>applyPermissions()).observe(document.body,{childList:true,subtree:true});
+  document.addEventListener('click',event=>{
+    const action=event.target.closest('[data-permission]');
+    if(action&&!hasPermission(action.dataset.permission)){event.preventDefault();event.stopImmediatePropagation()}
+  },true);
 }
