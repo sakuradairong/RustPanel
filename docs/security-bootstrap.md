@@ -89,4 +89,4 @@ EnvironmentFile=/etc/rustpanel/security.env
 
 日志读取到真实 EOF 后取尾部，最多返回 10000 行和 4 MiB；超过 64 KiB 的单行明确报错。Docker one-shot exec 最多缓存 1 MiB，整个响应有 30 秒 deadline，返回真实 exit_code、truncated、timed_out 和 exec_id；超时会释放面板连接，但 Docker API 无法单独终止 exec 进程，它可能仍在容器内运行，需按 exec_id 检查，不能自动重试。
 
-这些保护尚不覆盖备份恢复 CLI、进程内 rustls 终结与全部宿主命令面迁入 runner。生产准入继续按开发文档的全部 M0 条件验收。
+这些保护尚不覆盖备份恢复 CLI、进程内 rustls 终结与全部宿主命令面迁入 runner。当前生产准入需满足[开发方案 v0.3](development-plan.md)的 CP0 可信底座条件，并完成 CP1 主线的 VM、浏览器和恢复验收；旧 M0 状态保留在历史记录中，不由本轮文档重排自动判为完成。

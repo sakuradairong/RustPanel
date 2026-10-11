@@ -13,29 +13,25 @@ _语言: 中文, [English](README.md)
 ## 🤔 这是什么?
 ![image](https://github.com/WyntersN/RustPanel/assets/27792650/5080e1e5-24f5-4fdc-a85e-be45061626b5)
 
-这是基于Rust开发的新一代服务器面板。它能够监控服务器CPU、内存、流量流入和流出，以及管理数据库、网站、Docker，支持第三方插件开发等操作
+RustPanel 是基于 Rust 的服务器管理面板，目标是提供轻量、安全、可恢复的单机 Linux 运维。已有监控、文件、网站和 Docker 管理代码，以及认证、权限和会话保护；独立特权执行器、完整数据库管理与备份恢复仍需开发和验收。
 
-**当项目能够正常运行时将会发布一个构建版本(Linux和Win,我相信这很快)***
+> 当前正在完善 CP0 可信底座，尚未完成生产准入；支持范围与验收状态以开发文档为准。
 
-***正在重构前端...***
+## 开发路线
 
-## 项目计划
+完整范围、依赖和验收条件见[开发方案 v0.3](docs/development-plan.md)，技术依据见[Rust 优势研究](docs/rust-panel-advantages.md)。下表是交付目标，不是已完成列表。
 
-|服务 |描述|
-|----------------|--------------------------------|
-|支持系统|`Linux、Windows、Mac`
-|站点管理|`支持的HTTP 服务器(nginx、apache、caddy) 支持的开发语言 (PHP、Node、Python、Java、Go)`
-|服务器管理|`MySql、PostgreSQL、MongoDB、redis`
-|Docker|`这是一个关键点，极有可能在本项目后期增加K8s，以实现K8s管理的可视化操作`
-|文件管理|`您可以在线编辑代码并可视化文件管理。这是一个突出的安全问题，因此我们将在传输和保存过程中对文件进行加密`
-|防火墙|`端口的开放和拒绝，SSH管理`
-|资产管理|`使用一个面板管理多个面板，只需将主服务器连接地址和API密钥添加到配置文件中即可轻松管理多个面板`
-|开放API|`您可以使用API自行管理`
-|插件|`将实现支持Rust、Go、C和C++开发的插件`
-|国际化|`中文、英语`
+| 阶段 | 交付目标 |
+| --- | --- |
+| CP0 可信底座 | 非 root 面板、独立受限 runner、任务结果恢复、秘密接入、发布验签与资源基线 |
+| CP1 应用恢复闭环 | Ubuntu 24.04 x86_64 上完成 HTTP 应用 + PostgreSQL、Nginx HTTPS、备份、隔离恢复与升级故障处理 |
+| CP2 实用替代 | MySQL/Redis/PHP、验证过的应用模板、S3/调度/告警、作用域 API token、1Panel 盘点与接管 |
+| CP3 按需求扩展 | 多节点、插件、AI 集成；先评估信任模型和维护成本 |
+
+保留 Actix/Tokio/SQLite 与原生 JS。Debian/aarch64 经独立验收后扩展；Windows/macOS 和 K8s 暂不进入主线。
 
 ## 安全密钥与开发进度
 
 面板现在要求配置独立的实例密钥：`RP_SECRET_KEY`（至少 32 字节）和 `RP_SESSION_KEY`（至少 64 字节）。缺失、过短、相同或沿用曾公开的默认值都会拒绝启动。YAML 中的 `app.secret_key` 不是 JWT 密钥来源。
 
-参见[密钥配置及升级说明](docs/security-bootstrap.md)、[开发方案](docs/development-plan.md)和[实施进度](docs/development-progress.md)。首批安全修复已实施，其余生产准入项仍待开发和验收。
+参见[密钥配置及升级说明](docs/security-bootstrap.md)、[开发方案](docs/development-plan.md)、[实施进度](docs/development-progress.md)和[《Rust 作为服务器 Web 面板的优势》研究](docs/rust-panel-advantages.md)。首批安全修复已实施，其余生产准入项仍待开发和验收。
